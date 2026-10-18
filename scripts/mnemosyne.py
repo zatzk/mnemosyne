@@ -2273,7 +2273,7 @@ class FSRSEngine:
 # ==============================================================================
 
 PRODUCTION_MAX_CHARS: int = 2400
-ALLOWED_EVENT_KINDS: Tuple[str, ...] = ("encode", "review", "pretest", "transfer", "audit")
+ALLOWED_EVENT_KINDS: Tuple[str, ...] = ("encode", "learn", "review", "relearn", "pretest", "transfer", "audit")
 
 
 class StashEngine:
