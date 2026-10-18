@@ -1,7 +1,7 @@
 # Mnemosyne Obsidian Vault & Zettelkasten Conventions (`skills/_shared/obsidian-conventions.md`)
 
-> **Binding Vault, Sanctuary & Zettelkasten Graduation Specification for `mnemosyne.py`, `/synthesize`, `/learn`, `/review`, `/visualize`, and `/coach`.**
-> Enforces `RN-09` (Dual-Write Spaced Repetition Sync), `RN-10` (Vault Sanctuary, Fleeting Graduation & Epistemological Note Structure), `CON-03`..`CON-06`, `ASR-01`, `ASR-04`, `ASR-05`, and `SEC-YAML-01`.
+> **Binding Vault, Sanctuary, Zettelkasten Graduation & 3-Way Spaced Repetition Sync Specification for `mnemosyne.py`, `/synthesize`, `/learn`, `/review`, `/visualize`, and `/coach`.**
+> Enforces `RN-09` (3-Way Spaced Repetition Sync: FSRS-4.5 $\leftrightarrow$ `obsidian-spaced-repetition` $\leftrightarrow$ AnkiConnect), `RN-10` (Vault Sanctuary, Fleeting Graduation & Epistemological Note Structure), `CON-03`..`CON-06`, `ASR-01`, `ASR-04`, `ASR-05`, `SEC-YAML-01`, and `SEC-ANKI-01`.
 
 ---
 
@@ -17,14 +17,14 @@ The Vault's `05 - Fleeting/` directory is partitioned into two strictly separate
    - Dedicated Mnemosyne Fleeting workspace supporting the **Study Inbox** (`05 - Fleeting/mnemosyne/inbox/`) and **Full Zettelkasten Graduation** (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` $\rightarrow$ `02 - Areas/` or `04 - Permanent/`).
 
 > [!CAUTION]
-> **HARD SANCTUARY BLOCK — EXIT CODE `2`**
-> The following paths are **inviolable sanctuaries**:
-> - **`05 - Fleeting/quicknotes/`** (Omarchy QuickNote widget directory configured in `~/.config/omarchy/shell.json`)
-> - **Any file or subdirectory inside `05 - Fleeting/` OUTSIDE `05 - Fleeting/mnemosyne/`** (e.g., `05 - Fleeting/secret.md`, `05 - Fleeting/personal/`)
-> - **`.git/`** (Git repository internals)
-> - **`.obsidian/`** (Obsidian workspace, plugin binaries, and hotkeys)
->
-> **Rule:** Neither `scripts/mnemosyne.py` (`VaultGate`) nor any skill or subagent may **ever** read, list, create, modify, or delete any file inside `05 - Fleeting/quicknotes/`, any path in `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/`, `.git/`, or `.obsidian/`. Any lexical or symlink-resolved path touching these sanctuaries immediately aborts with **Exit Code `2`** and zero filesystem changes (`AC-SYNTH-03`).
+> **HARD SANCTUARY & AIR-GAP BLOCK — EXIT CODE `2`**
+> 1. **Vault Sanctuaries:**
+>    - **`05 - Fleeting/quicknotes/`** (Omarchy QuickNote widget directory configured in `~/.config/omarchy/shell.json`)
+>    - **Any file or subdirectory inside `05 - Fleeting/` OUTSIDE `05 - Fleeting/mnemosyne/`** (e.g., `05 - Fleeting/secret.md`, `05 - Fleeting/personal/`)
+>    - **`.git/`** (Git repository internals)
+>    - **`.obsidian/`** (Obsidian workspace, plugin binaries, and hotkeys)
+> 2. **Loopback Air-Gap (`SEC-ANKI-01`):**
+>    - `sync-anki` permits **only** local loopback AnkiConnect endpoints (`http://127.0.0.1:8765`, `localhost`, `::1`). Any non-loopback or external URL immediately terminates with **Exit Code `2`**.
 
 ---
 
@@ -36,35 +36,32 @@ All Mnemosyne reads and writes are strictly confined to the following directory 
 | :--- | :---: | :--- |
 | **`05 - Fleeting/quicknotes/`** *(and `05 - Fleeting/*` outside `mnemosyne/`)* | **FORBIDDEN (`Exit 2`)** | **Inviolable Sanctuary.** Omarchy QuickNote widget (`~/.config/omarchy/shell.json`) and personal scratch notes. Zero reads, zero writes. |
 | **`05 - Fleeting/mnemosyne/inbox/`** | Read / Write | **Study Inbox:** Raw study ideas, questions, paper snippets, or topic seeds dropped by the user or via `python3 scripts/mnemosyne.py inbox add`. Surfaced by `/coach` and `/learn` via `python3 scripts/mnemosyne.py inbox list`. |
-| **`05 - Fleeting/mnemosyne/<Topic>/`** | Read / Write | **Fleeting Study Drafts (`status: fleeting`):** `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`. Holds in-progress / unmastered nodes (`learning`, `relearning`, `score <= 2`, or stashed drafts prior to passing blind assessment). |
+| **`05 - Fleeting/mnemosyne/<Topic>/`** | Read / Write | **Fleeting Study Drafts (`status: fleeting`):** `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`. Holds in-progress / unmastered nodes (`learning`, `relearning`, `score <= 2`, or stashed drafts). **Never pushed to Anki before comprehension.** |
 | **`00 - Maps of Content/`** | Read / Write | **Topic Maps of Content:** `<Sanitized Topic Title> MoC.md` (e.g., `Raft Distributed Consensus MoC.md`). Contains topic progress summary, mastery table, and a Mermaid dependency DAG (`flowchart TD`) with live status badges (`✅`, `🔄`, `🔒`) and `[[Wikilinks]]`. |
-| **`02 - Areas/<Domain>/<Topic>/`** *(or `02 - Areas/<Domain>/`)* | Read / Write | **Graduated Domain Notes (`status: permanent`):** Compiled when `note_target == "02 - Areas"` and the node passes blind assessment (`score >= 3` / `review` state). |
-| **`04 - Permanent/`** | Read / Write | **Graduated Evergreen Notes (`status: permanent`):** `04 - Permanent/<Sanitized Node Title>.md`. Compiled when `note_target == "04 - Permanent"` (default) and the node passes blind assessment (`score >= 3` / `review` state). |
+| **`02 - Areas/<Domain>/<Topic>/`** *(or `02 - Areas/<Domain>/`)* | Read / Write | **Graduated Domain Notes (`status: permanent`):** Compiled when `note_target == "02 - Areas"` and the node passes blind assessment (`score >= 3` / `review` state). Eligible for `sync-anki` push to `Mnemosyne::<Domain>::<Topic>`. |
+| **`04 - Permanent/`** | Read / Write | **Graduated Evergreen Notes (`status: permanent`):** `04 - Permanent/<Sanitized Node Title>.md`. Compiled when `note_target == "04 - Permanent"` (default) and the node passes blind assessment (`score >= 3` / `review` state). Eligible for `sync-anki` push to `Mnemosyne::<Domain>::<Topic>`. |
 | **`99 - Meta/00 - Templates/`** | **Read-Only** | User's Obsidian note templates (read-only reference; never overwritten). |
 | **`99 - Meta/attachments/`** | Read / Write | Self-verified visual artifacts: `<topic>-<node>.svg` (or `viz-<slug>-<ts>.svg`) and `<topic>-<node>-explorable.html` (or `viz-<slug>-<ts>.html`), plus `report.html` dashboard. |
-| **`99 - Meta/mnemosyne-state/`** | Read / Write | **Single Authoritative State Ledger (`HLD-01`):**<br>• `.mnemosyne.lock` (PID-checked POSIX advisory mutex)<br>• `learner-model.json` (FSRS-4.5 $W[0..16]$, retention target, preferences)<br>• `topics/<slug>.json` (Curriculum DAG, node rubrics, FSRS state, OCC metadata)<br>• `receipts/<slug>.jsonl` (Append-only cryptographic receipt ledger)<br>• `stash.jsonl` (Crash-safe ungraded learner productions)<br>• `misconceptions.json` & `experiments.json`<br>• `conflicts/<slug>--<node>--<ts>.md` (OCC & managed-block conflict snapshots) |
+| **`99 - Meta/mnemosyne-state/`** | Read / Write | **Single Authoritative State Ledger (`HLD-01`):**<br>• `.mnemosyne.lock` (PID-checked POSIX advisory mutex)<br>• `learner-model.json` (FSRS-4.5 $W[0..16]$, retention target, preferences)<br>• `topics/<slug>.json` (Curriculum DAG, node rubrics, FSRS state, OCC metadata, `anki_note_id`, `anki_card_id`)<br>• `receipts/<slug>.jsonl` (Append-only cryptographic receipt ledger)<br>• `stash.jsonl` (Crash-safe ungraded learner productions)<br>• `misconceptions.json` & `experiments.json`<br>• `conflicts/<slug>--<node>--<ts>.md` (OCC & managed-block conflict snapshots) |
 
-### 2.1 Full Zettelkasten Graduation Workflow (`status: fleeting` $\rightarrow$ `status: permanent`)
+### 2.1 Full Zettelkasten Graduation & Anki Promotion Workflow
 
 ```mermaid
 flowchart LR
-    Inbox["05 - Fleeting/mnemosyne/inbox/\n(Raw Study Seeds & Questions)\nmnemosyne.py inbox list / add"] -->|"/learn or /coach"| Draft["05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md\nstatus: fleeting\n(In-Progress / Stashed / score <= 2 / learning)"]
-    Draft -->|"Passes Blind Assessment\n(score >= 3 / state == review)\nmnemosyne.py synthesize"| Grad["04 - Permanent/<Node Title>.md\nOR 02 - Areas/<Domain>/<Topic>/<Node Title>.md\nstatus: permanent"]
-    Draft -.->|"Carries over user YAML & prose\noutside <!-- mnemosyne:start/end -->\nand removes fleeting draft"| Grad
+    Inbox["05 - Fleeting/mnemosyne/inbox/\n(Study Seeds)\ninbox list / add"] -->|"/learn or /coach"| Draft["05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md\nstatus: fleeting\n(score <= 2 / learning — NOT in Anki)"]
+    Draft -->|"Passes Blind Assessment\n(score >= 3 / state == review)\nmnemosyne.py synthesize"| Grad["04 - Permanent/ OR 02 - Areas/\nstatus: permanent\n(Carries over user prose, removes draft)"]
+    Grad <-->|"3-Way Sync:\nsync-sr (Obsidian SR)\nsync-anki (AnkiConnect 127.0.0.1:8765)"| Anki["Anki Deck: Mnemosyne::<Domain>::<Topic>\nModel: Mnemosyne Zettelkasten\n(anki_note_id, anki_card_id)"]
 ```
 
 1. **Stage 0 — Study Inbox (`05 - Fleeting/mnemosyne/inbox/`):**
-   - The user (or `python3 scripts/mnemosyne.py inbox add --title "<title>" --file <path>`) captures raw study questions, curiosity gaps, or reading notes in `05 - Fleeting/mnemosyne/inbox/`.
+   - The user (or `python3 scripts/mnemosyne.py inbox add`) captures raw study questions, curiosity gaps, or reading notes in `05 - Fleeting/mnemosyne/inbox/`.
    - `/coach` and `/learn` inspect `python3 scripts/mnemosyne.py inbox list` to propose new topics or link inbox items into active curriculum DAGs.
 2. **Stage 1 — Fleeting Study Draft (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`):**
    - While a node is in acquisition or recovery (`state` in `learning` or `relearning`, `score <= 2` on blind assessment, or has a stashed production not yet graduated), `mnemosyne.py synthesize` writes the note to `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` with YAML `status: fleeting`.
-   - The user can freely annotate below `<!-- mnemosyne:end -->` while studying.
-3. **Stage 2 — Graduation to Permanent (`02 - Areas/` or `04 - Permanent/`):**
-   - Once the node passes blind assessment (`score >= 3` / `state == "review"`), running `python3 scripts/mnemosyne.py synthesize` **automatically graduates** the note from `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` to its permanent destination (`04 - Permanent/<Node Title>.md` or `02 - Areas/<Domain>/<Topic>/<Node Title>.md`):
-     - Updates YAML frontmatter to `status: permanent`.
-     - **Carries over 100% of user-authored YAML keys and any freeform prose written outside `<!-- mnemosyne:start/end -->`** from the fleeting draft into the permanent note.
-     - **Atomically removes the superseded fleeting draft** from `05 - Fleeting/mnemosyne/<Topic>/` so no duplicate notes exist in the Vault.
-     - Updates `00 - Maps of Content/<Topic> MoC.md` badges (`🔄` $\rightarrow$ `✅`) and wikilinks.
+   - **Pedagogical Guardrail:** Fleeting drafts (`status: fleeting`) are **never** pushed to Anki before comprehension is verified.
+3. **Stage 2 — Graduation to Permanent (`02 - Areas/` or `04 - Permanent/`) & Anki Deck Promotion:**
+   - Once the node passes blind assessment (`score >= 3` / `state == "review"`), running `python3 scripts/mnemosyne.py synthesize` **automatically graduates** the note from `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` to `04 - Permanent/<Node Title>.md` or `02 - Areas/<Domain>/<Topic>/<Node Title>.md` (`status: permanent`), carrying over 100% of user YAML keys and prose outside `<!-- mnemosyne:start/end -->` and removing the fleeting draft.
+   - Once graduated (`status: permanent`), `python3 scripts/mnemosyne.py sync-anki` exports the card to Anki deck `Mnemosyne::<Domain>::<Topic>` (model `Mnemosyne Zettelkasten`) with its Probe, Unconditional Truth, Motivated Discovery, Learner's Own Words, SVG/PNG media (`storeMediaFile`), and an `obsidian://open?vault=...` deep link button, recording `anki_note_id` and `anki_card_id` in the note's YAML frontmatter.
 
 ### 2.2 Slug & Filename Sanitization (`CON-06`)
 - **Topic Slugs & Node IDs:** Must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (kebab-case recommended, no spaces, slashes, or leading dots).
@@ -72,9 +69,9 @@ flowchart LR
 
 ---
 
-## 3. Dual-Write YAML Frontmatter Contract (`RN-09`, `ASR-05`, `SEC-YAML-01`)
+## 3. 3-Way Spaced Repetition YAML Frontmatter Contract (`RN-09`, `ASR-05`, `SEC-YAML-01`)
 
-Every compiled note carries a deterministic dual-write YAML frontmatter block (`status: fleeting` while in `05 - Fleeting/mnemosyne/<Topic>/`; `status: permanent` once graduated to `02 - Areas/` or `04 - Permanent/`) that bridges Mnemosyne's FSRS-4.5 engine with the **`obsidian-spaced-repetition`** community plugin:
+Every compiled note carries a deterministic YAML frontmatter block (`status: fleeting` while in `05 - Fleeting/mnemosyne/<Topic>/`; `status: permanent` once graduated to `02 - Areas/` or `04 - Permanent/`) that bridges **Mnemosyne FSRS-4.5**, **`obsidian-spaced-repetition`** (`sync-sr`), and **AnkiConnect** (`sync-anki`):
 
 ```yaml
 ---
@@ -103,28 +100,25 @@ fsrs_lapses: 0
 sr-due: 2026-10-22
 sr-interval: 4
 sr-ease: 222
+anki_note_id: 1729260001234
+anki_card_id: 1729260005678
 ---
 ```
 
-### 3.1 Span-Preserving YAML Rules (`SEC-YAML-01`)
+### 3.1 Span-Preserving YAML & 3-Way Sync Rules (`SEC-YAML-01`, `SEC-ANKI-01`)
 1. **User-Owned Keys Preserved Byte-for-Byte:** Any custom YAML keys added by the user (e.g., `cssclasses`, `up: "[[Distributed Systems MoC]]"`, custom `tags` or `aliases`) are preserved untouched across re-syntheses and across graduation from `05 - Fleeting/mnemosyne/<Topic>/` to `02 - Areas/` or `04 - Permanent/`.
 2. **Lifecycle `status` Property:**
    - `status: fleeting` on drafts in `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` (`learning`, `relearning`, `score <= 2`, or stashed drafts).
    - `status: permanent` on graduated notes in `02 - Areas/` and `04 - Permanent/` (`score >= 3` / `review` state).
-3. **Additive Tag Merging:** Mnemosyne ensures `#review`, `#sr/concept` (or `#sr/procedure`, `#sr/fact`), and `#mnemosyne/<topic>` are present in `tags` without removing any user-added tags.
-4. **Unquoted `sr-*` Scalars for Plugin Regex Compatibility:**
-   - `sr-due` MUST be emitted as an unquoted ISO date (`sr-due: YYYY-MM-DD`).
-   - `sr-interval` MUST be emitted as an integer $\ge 1$ (`max(1, round(fsrs.interval))`).
-   - `sr-ease` MUST be emitted as an integer in $[130, 300]$ computed from FSRS difficulty $D \in [1, 10]$:
-     $$\text{sr-ease} = \text{round}\left(300 - \frac{D - 1.0}{9.0} \times 170\right)$$
-5. **Bi-Directional `sync-sr` Reconciliation (`ASR-05`):**
-   - When the user reviews a note inside Obsidian using `obsidian-spaced-repetition`, the plugin updates `sr-due`, `sr-interval`, and `sr-ease` while `mnemosyne_sid` remains equal to `node.last_sid`.
-   - Running `python3 scripts/mnemosyne.py sync-sr` (also run automatically before `synthesize`) detects `sr-due != fsrs_due` (ignoring `*.sync-conflict*` files), infers the FSRS rating $G \in \{1..4\}$ from $\Delta \text{sr-ease}$ and `sr-interval`:
-     - $\text{sr-interval}_{\text{md}} \le 1 \lor \Delta \text{sr-ease} \le -15 \implies G = 1\ (\text{again / lapsed})$
-     - $-15 < \Delta \text{sr-ease} < 0 \implies G = 2\ (\text{hard / partial})$
-     - $\Delta \text{sr-ease} == 0 \implies G = 3\ (\text{good / recalled})$
-     - $\Delta \text{sr-ease} > 0 \implies G = 4\ (\text{easy / recalled})$
-   - Applies the FSRS-4.5 transition at $d_{\text{rev}} = \text{clamp}(\text{sr\_due} - \text{sr\_interval},\, \text{fsrs.last},\, \text{today})$, appends a receipt with `"source": "obsidian-sr"`, and re-synchronizes the YAML frontmatter.
+3. **Unquoted `sr-*` Scalars (`obsidian-spaced-repetition` Bridge — `sync-sr`):**
+   - `sr-due` is emitted as an unquoted ISO date (`sr-due: YYYY-MM-DD`), `sr-interval` as an integer $\ge 1$, and `sr-ease` as $\text{round}(300 - \frac{D - 1.0}{9.0} \times 170) \in [130, 300]$.
+   - External Obsidian SR reviews (`sr-due != fsrs_due` while `mnemosyne_sid == node.last_sid`) are reconciled by `sync-sr` into FSRS-4.5 with `source: "obsidian-sr"`.
+4. **Direct Bi-Directional AnkiConnect Sync (`sync-anki`):**
+   - **Command:** `python3 scripts/mnemosyne.py sync-anki [--topic <slug>] [--anki-url <url>] [--strict] [--dry-run]`
+   - **Loopback Air-Gap (`SEC-ANKI-01`):** Only loopback URLs (`http://127.0.0.1:8765`, `localhost`, `::1`) are permitted; any external host immediately exits with **Exit Code `2`**.
+   - **Graceful Offline Mode:** When Anki Desktop is closed, `sync-anki` returns `{"ok": true, "anki_online": false, "status": "skipped_offline"}` with **Exit Code `0`** (unless `--strict` is passed) so `/review`, `/synthesize`, and `/coach` never break when Anki is not running.
+   - **Outbound Push (`Graduated Notes Only`):** Pushes `status: permanent` notes (`score >= 3`) to deck `Mnemosyne::<Domain>::<Topic>` (model `Mnemosyne Zettelkasten`) with Probe, Unconditional Truth, Motivated Discovery, Learner's Own Words, SVG/PNG media via `storeMediaFile`, and an `obsidian://open?vault=...` deep link button, persisting `anki_note_id` and `anki_card_id` into both `topics/<slug>.json` and the Obsidian note's YAML frontmatter.
+   - **Inbound Pull (`AnkiMobile / AnkiDroid / Anki Desktop -> Mnemosyne -> Obsidian SR`):** Pulls new reviews via `getReviewsOfCards`, logs append-only receipts with `source: "anki"` (excluded from blind-graded `retention` and `refit` telemetry), updates FSRS-4.5 state, and synchronizes `fsrs_*` and `sr-due` / `sr-interval` / `sr-ease` in the Obsidian note frontmatter.
 
 ---
 

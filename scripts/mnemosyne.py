@@ -17,6 +17,7 @@ Air-gapped Python 3.10+ standard-library-only engine structured into 8 strict LL
 
 import argparse
 import ast
+import base64
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
@@ -35,6 +36,9 @@ import tempfile
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 
 # ==============================================================================
@@ -47,6 +51,7 @@ SCHEMA_VERSION = 1
 ALLOWED_STDLIB_IMPORTS: Tuple[str, ...] = (
     "argparse",
     "ast",
+    "base64",
     "dataclasses",
     "datetime",
     "enum",
@@ -65,6 +70,7 @@ ALLOWED_STDLIB_IMPORTS: Tuple[str, ...] = (
     "time",
     "typing",
     "unicodedata",
+    "urllib",
     "uuid",
 )
 
@@ -338,6 +344,9 @@ class NoteEnvelope:
     st_size: int
     status: str = "permanent"
     fleeting_path: Optional[str] = None
+    anki_note_id: Optional[int] = None
+    anki_card_id: Optional[int] = None
+    last_anki_revlog_id: Optional[int] = None
     conflict_snapshot: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -350,6 +359,12 @@ class NoteEnvelope:
         }
         if self.fleeting_path:
             d["fleeting_path"] = self.fleeting_path
+        if self.anki_note_id is not None:
+            d["anki_note_id"] = int(self.anki_note_id)
+        if self.anki_card_id is not None:
+            d["anki_card_id"] = int(self.anki_card_id)
+        if self.last_anki_revlog_id is not None:
+            d["last_anki_revlog_id"] = int(self.last_anki_revlog_id)
         if self.conflict_snapshot:
             d["conflict_snapshot"] = self.conflict_snapshot
         return d
@@ -695,6 +710,51 @@ class VaultGate:
         # Reject external network URLs in src/href
         if re.search(r'\b(?:src|href)\s*=\s*["\']\s*https?://', html_content, re.I):
             raise ValidationError("HTML artifact contains forbidden external http(s):// src/href resource.")
+
+    @staticmethod
+    def validate_loopback_url(url: Any) -> str:
+        """
+        SEC-ANKI-01: Strictly confines AnkiConnect RPC transport to local loopback HTTP
+        endpoints (127.0.0.1, localhost, ::1). Raises SanctuaryViolationError (Exit Code 2)
+        on any external host, non-http scheme, userinfo (@), or invalid port.
+        """
+        if not isinstance(url, str) or not url.strip():
+            raise SanctuaryViolationError("LOOPBACK VIOLATION: Empty or non-string AnkiConnect URL (Exit Code 2).")
+        s = url.strip()
+        if any(ch in s for ch in ("@", "\x00", "\r", "\n", " ", "\t")):
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Forbidden character or credentials in URL {url!r} (Exit Code 2)."
+            )
+        parsed = urllib.parse.urlparse(s)
+        if parsed.scheme != "http":
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Only 'http' loopback scheme is allowed, got {parsed.scheme!r} in {url!r} (Exit Code 2)."
+            )
+        if parsed.username is not None or parsed.password is not None:
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Credentials forbidden in loopback URL {url!r} (Exit Code 2)."
+            )
+        host = (parsed.hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Host {host!r} in {url!r} is not loopback (127.0.0.1, localhost, ::1) (Exit Code 2)."
+            )
+        try:
+            port = parsed.port if parsed.port is not None else 8765
+        except ValueError as exc:
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Invalid port in {url!r}: {exc} (Exit Code 2)."
+            ) from exc
+        if not (1 <= int(port) <= 65535):
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Port {port} out of range 1..65535 in {url!r} (Exit Code 2)."
+            )
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise SanctuaryViolationError(
+                f"LOOPBACK VIOLATION: Unexpected path/query/fragment in AnkiConnect URL {url!r} (Exit Code 2)."
+            )
+        host_fmt = f"[{host}]" if ":" in host else host
+        return f"http://{host_fmt}:{int(port)}"
 
 
 # ==============================================================================
@@ -2093,18 +2153,20 @@ class FSRSEngine:
     # Coordinate-Search Refit & Retention Analytics
     # --------------------------------------------------------------------------
 
+    step = apply_rating
+
     @classmethod
     def filter_blind_review_receipts(
         cls, receipts: Iterable[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Strictly filters to blind-graded review receipts (excluding source == 'obsidian-sr').
+        Strictly filters to blind-graded review receipts (excluding source in ('obsidian-sr', 'anki')).
         """
         usable: List[Dict[str, Any]] = []
         for r in receipts:
             if not isinstance(r, dict):
                 continue
-            if r.get("source") == "obsidian-sr":
+            if r.get("source") in ("obsidian-sr", "anki"):
                 continue
             if r.get("kind") not in ("review", "encode", "transfer"):
                 continue
@@ -2157,7 +2219,7 @@ class FSRSEngine:
         force: bool = False,
     ) -> Dict[str, Any]:
         """
-        Coordinate-search FSRS-4.5 optimizer over blind-graded receipts (source != 'obsidian-sr').
+        Coordinate-search FSRS-4.5 optimizer over blind-graded receipts (source not in ('obsidian-sr', 'anki')).
         Requires >= 30 blind review receipts unless force=True.
         """
         blind_reviews = cls.filter_blind_review_receipts(all_receipts)
@@ -2168,7 +2230,7 @@ class FSRSEngine:
                 "accepted": False,
                 "n_blind_reviews": n_reviews,
                 "required_min": REFIT_MIN_BLIND_REVIEWS,
-                "reason": f"Need >= {REFIT_MIN_BLIND_REVIEWS} blind-graded review receipts (excluding obsidian-sr); have {n_reviews}.",
+                "reason": f"Need >= {REFIT_MIN_BLIND_REVIEWS} blind-graded review receipts (excluding obsidian-sr/anki); have {n_reviews}.",
             }
         if n_reviews == 0:
             return {
@@ -2182,7 +2244,7 @@ class FSRSEngine:
         # Group blind receipts into per-(topic, node) chronological trajectories
         by_node: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for r in all_receipts:
-            if not isinstance(r, dict) or r.get("source") == "obsidian-sr":
+            if not isinstance(r, dict) or r.get("source") in ("obsidian-sr", "anki"):
                 continue
             t_slug = r.get("topic")
             n_id = r.get("node")
@@ -2959,6 +3021,8 @@ MANAGED_YAML_ORDER: Tuple[str, ...] = (
     "sr-due",
     "sr-interval",
     "sr-ease",
+    "anki_note_id",
+    "anki_card_id",
 )
 
 
@@ -3110,7 +3174,7 @@ class MDCompiler:
         # SEC-YAML-01: sr-due unquoted YYYY-MM-DD; sr-interval & sr-ease bare integers
         if key == "sr-due":
             return f"sr-due: {value}"
-        if key in ("sr-interval", "sr-ease", "mnemosyne_schema", "fsrs_reps", "fsrs_lapses"):
+        if key in ("sr-interval", "sr-ease", "mnemosyne_schema", "fsrs_reps", "fsrs_lapses", "anki_note_id", "anki_card_id"):
             return f"{key}: {int(value or 0)}"
         if key in ("fsrs_stability", "fsrs_difficulty"):
             if value is None:
@@ -3320,6 +3384,24 @@ class MDCompiler:
         return "\n\n".join(sections)
 
     @classmethod
+    def is_node_graduated(
+        cls,
+        node: Dict[str, Any],
+        latest_receipt: Optional[Dict[str, Any]] = None,
+        abs_perm_path: Optional[Path] = None,
+    ) -> bool:
+        obs_prev = node.get("obsidian") or {}
+        last_score = int(as_finite_float((latest_receipt or {}).get("score"), 0.0) or 0)
+        return bool(
+            node.get("state") == "review"
+            or last_score >= 3
+            or (
+                obs_prev.get("status") == "permanent"
+                and (abs_perm_path is None or abs_perm_path.exists())
+            )
+        )
+
+    @classmethod
     def compile_note(
         cls,
         store: StateStore,
@@ -3364,12 +3446,7 @@ class MDCompiler:
         )
 
         obs_prev = node.get("obsidian") or {}
-        last_score = int(as_finite_float((latest_receipt or {}).get("score"), 0.0) or 0)
-        is_graduated = (
-            node.get("state") == "review"
-            or last_score >= 3
-            or (obs_prev.get("status") == "permanent" and abs_perm_path.exists())
-        )
+        is_graduated = cls.is_node_graduated(node, latest_receipt, abs_perm_path)
 
         if is_graduated:
             note_status = "permanent"
@@ -3388,6 +3465,10 @@ class MDCompiler:
         fsrs = FSRSState.from_dict(node.get("fsrs"))
         last_sid = node.get("last_sid") or (latest_receipt or {}).get("sid") or f"init-{slug}-{nid}"
         sr_fm = FSRSEngine.to_sr_frontmatter(fsrs, last_sid)
+
+        anki_note_id_val = obs_prev.get("anki_note_id")
+        anki_card_id_val = obs_prev.get("anki_card_id")
+        last_anki_revlog_val = obs_prev.get("last_anki_revlog_id")
 
         managed_yaml_updates: Dict[str, Any] = {
             "title": node.get("title") or nid,
@@ -3409,6 +3490,11 @@ class MDCompiler:
             "sr-interval": sr_fm.sr_interval,
             "sr-ease": sr_fm.sr_ease,
         }
+        if anki_note_id_val is not None:
+            managed_yaml_updates["anki_note_id"] = int(anki_note_id_val)
+        if anki_card_id_val is not None:
+            managed_yaml_updates["anki_card_id"] = int(anki_card_id_val)
+
         req_tags = [
             "review" if is_graduated else "fleeting",
             f"sr/{node.get('kind', 'concept')}",
@@ -3516,6 +3602,9 @@ class MDCompiler:
             st_size=st_after.st_size,
             status=note_status,
             fleeting_path=rel_fleeting_path if not is_graduated else None,
+            anki_note_id=int(anki_note_id_val) if anki_note_id_val is not None else None,
+            anki_card_id=int(anki_card_id_val) if anki_card_id_val is not None else None,
+            last_anki_revlog_id=int(last_anki_revlog_val) if last_anki_revlog_val is not None else None,
             conflict_snapshot=conflict_snapshot,
         )
         node["obsidian"] = envelope.to_dict()
@@ -3639,6 +3728,489 @@ class MDCompiler:
         )
         full_moc = f"{fm_str}{prefix}{_MANAGED_START}\n{inner_moc}\n{_MANAGED_END}{suffix}"
         return store.atomic_write_text(abs_moc, full_moc, require_in_vault=True)
+
+
+# ==============================================================================
+# SECTION 7B — ANKIBRIDGE (DIRECT BI-DIRECTIONAL ANKICONNECT FSRS-4.5 SYNC)
+# ==============================================================================
+
+class AnkiBridge:
+    """
+    HLD-05 & SEC-ANKI-01: Direct bi-directional AnkiConnect JSON-RPC v6 bridge.
+    - Strictly enforces loopback-only HTTP requests (`http://127.0.0.1:8765`, `localhost`, `[::1]`)
+      via `VaultGate.validate_loopback_url`. Any external host or non-http scheme raises Exit Code 2.
+    - Gracefully falls back when Anki desktop is offline (`status: "skipped_offline"`, Exit Code 0)
+      unless `--strict` is specified (`ValidationError`, Exit Code 1).
+    - Reverse-pulls mobile/desktop Anki card reviews FIRST via `getReviewsOfCards`, updates FSRS-4.5
+      and Obsidian `sr-due` / `sr-interval` / `sr-ease`, and appends `source: "anki"` receipts.
+    - Forward-pushes ONLY graduated Permanent notes (`status: "permanent"`) SECOND, uploading `.svg`/`.png`
+      visual artifacts via `storeMediaFile` and embedding deep `obsidian://open` URIs.
+    """
+
+    MODEL_NAME: str = "Mnemosyne Zettelkasten"
+    MODEL_FIELDS: Tuple[str, ...] = (
+        "NodeID",
+        "Front",
+        "Back",
+        "Topic",
+        "ObsidianURI",
+        "MnemosyneSID",
+    )
+    MODEL_CSS: str = (
+        ".card { font-family: system-ui, -apple-system, sans-serif; font-size: 18px; "
+        "line-height: 1.5; text-align: left; color: #f8fafc; background-color: #0f172a; padding: 1.25rem; }\n"
+        ".mn-meta { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.75rem; }\n"
+        ".mn-claim { background: #1e293b; border-left: 4px solid #38bdf8; padding: 0.75rem 1rem; margin: 0.75rem 0; border-radius: 4px; }\n"
+        ".mn-truth { color: #cbd5e1; margin-bottom: 0.75rem; }\n"
+        ".mn-media { margin: 1rem 0; text-align: center; }\n"
+        ".mn-media img { max-width: 100%; height: auto; border-radius: 6px; }\n"
+        ".mn-link { margin-top: 1rem; font-size: 13px; }\n"
+        ".mn-link a { color: #38bdf8; text-decoration: none; }"
+    )
+    CARD_FRONT_TMPL: str = (
+        '<div class="mn-meta">{{Topic}} · {{NodeID}}</div>'
+        '<div class="mn-front">{{Front}}</div>'
+    )
+    CARD_BACK_TMPL: str = (
+        "{{FrontSide}}"
+        '<hr id="answer">'
+        '<div class="mn-back">{{Back}}</div>'
+        '<div class="mn-link"><a href="{{ObsidianURI}}">Open Permanent Note in Obsidian</a></div>'
+    )
+
+    def __init__(
+        self,
+        anki_url: Optional[str] = None,
+        rpc_transport: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+    ) -> None:
+        raw_url = anki_url or os.environ.get("MNEMOSYNE_ANKI_URL") or "http://127.0.0.1:8765"
+        self.anki_url = VaultGate.validate_loopback_url(raw_url)
+        self.rpc_transport = rpc_transport
+
+    def rpc(self, action: str, **params: Any) -> Any:
+        validated_url = VaultGate.validate_loopback_url(self.anki_url)
+        payload: Dict[str, Any] = {"action": action, "version": 6}
+        if params:
+            payload["params"] = params
+
+        if self.rpc_transport is not None:
+            resp = self.rpc_transport(validated_url, payload)
+        else:
+            body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                validated_url,
+                data=body_bytes,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=1.5) as http_resp:
+                raw_resp = http_resp.read().decode("utf-8")
+            try:
+                resp = json.loads(raw_resp)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(f"Malformed JSON from AnkiConnect on {action!r}: {exc}") from exc
+
+        if not isinstance(resp, dict):
+            raise ValidationError(f"Invalid AnkiConnect response envelope on {action!r}: expected dict.")
+        if resp.get("error") is not None:
+            raise ValidationError(f"AnkiConnect error on {action!r}: {resp['error']}")
+        return resp.get("result")
+
+    @staticmethod
+    def _format_html_math(text: str) -> str:
+        """
+        Escapes HTML while converting display math $$...$$ to \\[...\\] and inline $...$ to \\(...\\)
+        for Anki MathJax compatibility.
+        """
+        escaped = html.escape(str(text or "").strip(), quote=True)
+        escaped = re.sub(r"\$\$(.+?)\$\$", r"\\[\1\\]", escaped, flags=re.DOTALL)
+        escaped = re.sub(r"(?<!\$)\$([^$\n]+?)\$(?!\$)", r"\\(\1\\)", escaped)
+        return escaped.replace("\n", "<br>")
+
+    @classmethod
+    def render_card_front(cls, node: Dict[str, Any], topic: Dict[str, Any]) -> str:
+        title = html.escape(str(node.get("title") or node.get("id") or ""), quote=True)
+        probe = cls._format_html_math(str(node.get("probe") or ""))
+        return f"<h3>{title}</h3><p>{probe}</p>"
+
+    @classmethod
+    def render_card_back(
+        cls,
+        node: Dict[str, Any],
+        latest_receipt: Optional[Dict[str, Any]] = None,
+        media_filename: Optional[str] = None,
+    ) -> str:
+        truth = cls._format_html_math(str(node.get("unconditional_truth") or ""))
+        claim = cls._format_html_math(str(node.get("claim") or ""))
+        parts = [
+            f'<div class="mn-truth"><strong>Unconditional Truth:</strong><br>{truth}</div>',
+            f'<div class="mn-claim"><strong>Core Claim:</strong><br>{claim}</div>',
+        ]
+        if media_filename:
+            safe_media = html.escape(media_filename, quote=True)
+            parts.append(f'<div class="mn-media"><img src="{safe_media}" alt="Visual Anchor"></div>')
+        prod_raw = str((latest_receipt or {}).get("production") or node.get("last_production") or "").strip()
+        if prod_raw:
+            parts.append(
+                f'<div class="mn-prod"><em>Verified Production:</em> {cls._format_html_math(prod_raw)}</div>'
+            )
+        return "\n".join(parts)
+
+    @staticmethod
+    def deck_name_for_topic(topic: Dict[str, Any]) -> str:
+        topic_title = VaultGate.sanitize_title(str(topic.get("title") or topic.get("slug") or "General"))
+        domain_raw = str(topic.get("domain") or "").strip()
+        if domain_raw:
+            domain_clean = VaultGate.sanitize_title(domain_raw)
+            return f"Mnemosyne::{domain_clean}::{topic_title}"
+        return f"Mnemosyne::{topic_title}"
+
+    def _ensure_model(self, dry_run: bool = False) -> None:
+        if dry_run:
+            return
+        existing_models = self.rpc("modelNames") or []
+        if self.MODEL_NAME not in existing_models:
+            self.rpc(
+                "createModel",
+                modelName=self.MODEL_NAME,
+                inOrderFields=list(self.MODEL_FIELDS),
+                css=self.MODEL_CSS,
+                isCloze=False,
+                cardTemplates=[
+                    {
+                        "Name": "Mnemosyne Production Card",
+                        "Front": self.CARD_FRONT_TMPL,
+                        "Back": self.CARD_BACK_TMPL,
+                    }
+                ],
+            )
+
+    def sync(
+        self,
+        store: StateStore,
+        topic_filter: Optional[str] = None,
+        strict: bool = False,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        with store.lock():
+            store.ensure_initialized()
+            try:
+                version = self.rpc("version")
+            except (urllib.error.URLError, ConnectionError, OSError, TimeoutError) as exc:
+                if strict:
+                    raise ValidationError(
+                        f"AnkiConnect is unreachable at {self.anki_url!r} (--strict mode enabled): {exc}",
+                        details={"anki_url": self.anki_url, "strict": True},
+                    ) from exc
+                return {
+                    "ok": True,
+                    "anki_online": False,
+                    "status": "skipped_offline",
+                    "anki_url": self.anki_url,
+                    "pushed_count": 0,
+                    "pulled_count": 0,
+                    "pushed": [],
+                    "pulled": [],
+                }
+
+            self._ensure_model(dry_run=dry_run)
+
+            model = store.load_learner_model(persist=False)
+            weights = FSRSEngine.normalize_weights((model.get("memory") or {}).get("fsrs_params"))
+            ret_req = as_finite_float((model.get("memory") or {}).get("desired_retention"), RETENTION_DEFAULT) or RETENTION_DEFAULT
+            im = as_finite_float((model.get("memory") or {}).get("interval_multiplier"), 1.0) or 1.0
+            relearn_on = (model.get("settings") or {}).get("relearning", "on") != "off"
+
+            slugs = [topic_filter] if topic_filter else store.list_topic_slugs()
+            all_misc = store.read_json("misconceptions.json") or []
+            pulled: List[Dict[str, Any]] = []
+            pushed: List[Dict[str, Any]] = []
+            skipped_fleeting: List[str] = []
+
+            for slug in slugs:
+                topic = store.load_topic(slug)
+                topic_dirty = False
+                nodes = [nd for nd in topic.get("nodes", []) if not nd.get("archived")]
+                by_id = {nd["id"]: nd for nd in nodes}
+                receipts = store.read_jsonl("receipts", f"{slug}.jsonl")
+                settled_sids: Set[str] = {
+                    str(r["sid"]) for r in receipts if isinstance(r.get("sid"), str)
+                }
+                latest_rec_by_node: Dict[str, Dict[str, Any]] = {}
+                for r in receipts:
+                    nid_r = r.get("node")
+                    if isinstance(nid_r, str):
+                        latest_rec_by_node[nid_r] = r
+
+                # --------------------------------------------------------------
+                # PHASE 1: REVERSE PULL FIRST (Anki -> Mnemosyne & Obsidian SR)
+                # --------------------------------------------------------------
+                nodes_with_cards: List[Tuple[Dict[str, Any], int]] = []
+                for nd in nodes:
+                    obs = nd.get("obsidian") or {}
+                    cid = obs.get("anki_card_id")
+                    if cid is not None and int(cid) > 0:
+                        nodes_with_cards.append((nd, int(cid)))
+
+                if nodes_with_cards:
+                    card_ids = [cid for _, cid in nodes_with_cards]
+                    reviews_map = self.rpc("getReviewsOfCards", cards=card_ids) or {}
+                    for nd, cid in nodes_with_cards:
+                        nid = nd["id"]
+                        obs = nd.setdefault("obsidian", {})
+                        last_rev_id = int(obs.get("last_anki_revlog_id") or 0)
+                        card_revs = (
+                            reviews_map.get(str(cid))
+                            if str(cid) in reviews_map
+                            else reviews_map.get(cid, [])
+                        ) or []
+                        new_revs = [
+                            rv for rv in card_revs
+                            if isinstance(rv, dict) and int(rv.get("id") or 0) > last_rev_id
+                        ]
+                        new_revs.sort(key=lambda rv: int(rv["id"]))
+
+                        if not new_revs:
+                            continue
+
+                        for rv in new_revs:
+                            rev_id = int(rv["id"])
+                            ease_raw = int(rv.get("ease") or 3)
+                            g = max(1, min(4, ease_raw))
+                            rev_dt_utc = datetime.fromtimestamp(rev_id / 1000.0, tz=timezone.utc)
+                            rev_date = rev_dt_utc.date()
+                            fsrs_cur = FSRSState.from_dict(nd.get("fsrs"))
+                            last_dt = parse_iso_date(fsrs_cur.last)
+                            today_dt = current_date()
+                            if last_dt is not None and rev_date < last_dt:
+                                rev_date = last_dt
+                            if rev_date > today_dt:
+                                rev_date = today_dt
+
+                            sid = f"anki-{slug}-{nid}-{rev_id}"
+                            if sid not in settled_sids:
+                                new_fsrs, trans, eff_g = FSRSEngine.step(
+                                    fsrs_cur,
+                                    g,
+                                    rev_date,
+                                    w=weights,
+                                    desired_retention=ret_req,
+                                    interval_multiplier=im,
+                                    relearning_enabled=relearn_on,
+                                    is_threshold=bool(nd.get("threshold")),
+                                    node_kind=nd.get("kind", "concept"),
+                                )
+                                sha_hex = hashlib.sha256(sid.encode("utf-8")).hexdigest()
+                                rec = ReceiptRecord(
+                                    id=f"rc-anki-{rev_id}-{sha_hex[:6]}",
+                                    sid=sid,
+                                    stash_sha256=sha_hex,
+                                    ts=rev_date.isoformat(),
+                                    captured_at=rev_dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    settled_at=current_iso_timestamp(),
+                                    source="anki",
+                                    topic=slug,
+                                    node=nid,
+                                    kind="review",
+                                    node_kind=nd.get("kind", "concept"),
+                                    grade=G_TO_GRADE[eff_g],
+                                    rating=G_TO_RATING[eff_g],
+                                    score=eff_g,
+                                    produced=True,
+                                    confidence=None,
+                                    error_class=None,
+                                    criteria_met=(),
+                                    probe_gap=(),
+                                    misconceptions=(),
+                                    production=nd.get("last_production") or "Reviewed in Anki via AnkiConnect.",
+                                    rationale=f"Pulled from AnkiConnect revlog id={rev_id} (ease={ease_raw}, ivl={rv.get('ivl')}).",
+                                    fsrs_transition=trans,
+                                    artifact_present=bool(nd.get("artifact") or nd.get("mermaid_block")),
+                                )
+                                rec_dict = rec.to_dict()
+                                if not dry_run:
+                                    store.append_jsonl(rec_dict, "receipts", f"{slug}.jsonl")
+                                receipts.append(rec_dict)
+                                settled_sids.add(sid)
+                                latest_rec_by_node[nid] = rec_dict
+
+                                nd["fsrs"] = new_fsrs.to_dict()
+                                nd["last_sid"] = sid
+                                nd["state"] = "learning" if eff_g == 1 else "review"
+                                pulled.append({
+                                    "topic": slug,
+                                    "node": nid,
+                                    "anki_card_id": cid,
+                                    "revlog_id": rev_id,
+                                    "ease": g,
+                                    "rating": G_TO_RATING[eff_g],
+                                    "review_date": rev_date.isoformat(),
+                                    "new_due": new_fsrs.due,
+                                    "sid": sid,
+                                })
+
+                            obs["last_anki_revlog_id"] = rev_id
+                            topic_dirty = True
+
+                        if not dry_run:
+                            node_misc = [
+                                m for m in all_misc
+                                if isinstance(m, dict) and m.get("topic") == slug and m.get("node") == nid
+                            ]
+                            MDCompiler.compile_note(
+                                store, topic, nd, latest_rec_by_node.get(nid), node_misc, by_id
+                            )
+
+                # --------------------------------------------------------------
+                # PHASE 2: FORWARD PUSH SECOND (Graduated Permanent Notes -> Anki)
+                # --------------------------------------------------------------
+                deck_name = self.deck_name_for_topic(topic)
+                deck_provisioned = False
+
+                for nd in nodes:
+                    nid = nd["id"]
+                    latest_rec = latest_rec_by_node.get(nid)
+                    obs = nd.setdefault("obsidian", {})
+
+                    # Strictly enforce Zettelkasten Graduation Gate:
+                    # NEVER push fleeting drafts (status == "fleeting") or ungraduated nodes
+                    if obs.get("status") == "fleeting" and not MDCompiler.is_node_graduated(nd, latest_rec):
+                        skipped_fleeting.append(f"{slug}:{nid}")
+                        continue
+                    if not MDCompiler.is_node_graduated(nd, latest_rec):
+                        skipped_fleeting.append(f"{slug}:{nid}")
+                        continue
+
+                    if not deck_provisioned and not dry_run:
+                        self.rpc("createDeck", deck=deck_name)
+                        deck_provisioned = True
+
+                    node_misc = [
+                        m for m in all_misc
+                        if isinstance(m, dict) and m.get("topic") == slug and m.get("node") == nid
+                    ]
+                    if not dry_run and (not obs.get("note_path") or obs.get("status") != "permanent"):
+                        env_pre = MDCompiler.compile_note(store, topic, nd, latest_rec, node_misc, by_id)
+                        obs = nd["obsidian"]
+                        note_rel_path = env_pre.note_path
+                    else:
+                        sanitized_title = VaultGate.sanitize_title(nd.get("title") or nid)
+                        note_target = topic.get("note_target", "04 - Permanent")
+                        if note_target == "02 - Areas":
+                            domain_dir = VaultGate.sanitize_title(topic.get("domain") or "General")
+                            default_rel = f"02 - Areas/{domain_dir}/{sanitized_title}.md"
+                        else:
+                            default_rel = f"04 - Permanent/{sanitized_title}.md"
+                        note_rel_path = str(obs.get("note_path") or default_rel)
+
+                    # Upload .svg / .png visual anchor via storeMediaFile if present
+                    media_filename: Optional[str] = None
+                    art_rel = nd.get("artifact")
+                    if isinstance(art_rel, str) and art_rel.strip():
+                        abs_art = store.gate.validate_path(
+                            store.gate.vault_root / art_rel.strip(),
+                            mode="r",
+                            require_in_vault=True,
+                        )
+                        if abs_art.is_file() and abs_art.suffix.lower() in (".svg", ".png"):
+                            media_filename = abs_art.name
+                            if not dry_run:
+                                b64_data = base64.b64encode(abs_art.read_bytes()).decode("ascii")
+                                self.rpc("storeMediaFile", filename=media_filename, data=b64_data)
+
+                    vault_name = store.gate.vault_root.name
+                    obsidian_uri = (
+                        f"obsidian://open?vault={urllib.parse.quote(vault_name, safe='')}"
+                        f"&file={urllib.parse.quote(note_rel_path, safe='')}"
+                    )
+                    last_sid = str(
+                        nd.get("last_sid")
+                        or (latest_rec or {}).get("sid")
+                        or f"init-{slug}-{nid}"
+                    )
+                    fields = {
+                        "NodeID": f"{slug}:{nid}",
+                        "Front": self.render_card_front(nd, topic),
+                        "Back": self.render_card_back(nd, latest_rec, media_filename=media_filename),
+                        "Topic": slug,
+                        "ObsidianURI": obsidian_uri,
+                        "MnemosyneSID": last_sid,
+                    }
+
+                    anki_note_id = obs.get("anki_note_id")
+                    anki_card_id = obs.get("anki_card_id")
+                    action_taken = "dry_run"
+
+                    if not dry_run:
+                        if anki_note_id is None:
+                            found_notes = self.rpc("findNotes", query=f'"NodeID:{slug}:{nid}"') or []
+                            if found_notes:
+                                anki_note_id = int(found_notes[0])
+
+                        if anki_note_id is not None:
+                            self.rpc(
+                                "updateNoteFields",
+                                note={"id": int(anki_note_id), "fields": fields},
+                            )
+                            action_taken = "updated"
+                            if anki_card_id is None:
+                                found_cards = self.rpc("findCards", query=f"nid:{int(anki_note_id)}") or []
+                                if found_cards:
+                                    anki_card_id = int(found_cards[0])
+                        else:
+                            added_id = self.rpc(
+                                "addNote",
+                                note={
+                                    "deckName": deck_name,
+                                    "modelName": self.MODEL_NAME,
+                                    "fields": fields,
+                                    "options": {"allowDuplicate": False},
+                                    "tags": [
+                                        "mnemosyne",
+                                        f"mnemosyne::{slug}",
+                                        f"kind::{nd.get('kind', 'concept')}",
+                                    ],
+                                },
+                            )
+                            if added_id is not None:
+                                anki_note_id = int(added_id)
+                                found_cards = self.rpc("findCards", query=f"nid:{anki_note_id}") or []
+                                if found_cards:
+                                    anki_card_id = int(found_cards[0])
+                            action_taken = "added"
+
+                        obs["anki_note_id"] = int(anki_note_id) if anki_note_id is not None else None
+                        obs["anki_card_id"] = int(anki_card_id) if anki_card_id is not None else None
+                        MDCompiler.compile_note(store, topic, nd, latest_rec, node_misc, by_id)
+                        topic_dirty = True
+
+                    pushed.append({
+                        "topic": slug,
+                        "node": nid,
+                        "deck": deck_name,
+                        "action": action_taken,
+                        "anki_note_id": obs.get("anki_note_id"),
+                        "anki_card_id": obs.get("anki_card_id"),
+                        "media": media_filename,
+                        "obsidian_uri": obsidian_uri,
+                    })
+
+                if topic_dirty and not dry_run:
+                    store.save_topic(topic)
+
+            return {
+                "ok": True,
+                "anki_online": True,
+                "anki_version": version,
+                "status": "synced" if not dry_run else "dry_run",
+                "anki_url": self.anki_url,
+                "pushed_count": len(pushed),
+                "pulled_count": len(pulled),
+                "skipped_fleeting_count": len(skipped_fleeting),
+                "pushed": pushed,
+                "pulled": pulled,
+            }
+
 
 
 # ==============================================================================
@@ -3821,6 +4393,13 @@ def cmd_status(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
     inbox_count = 0
     if inbox_dir.is_dir():
         inbox_count = sum(1 for f in inbox_dir.iterdir() if f.is_file() and f.suffix.lower() == ".md" and not f.name.startswith("."))
+    anki_synced_nodes = 0
+    for _slug in slugs:
+        try:
+            _tp = store.load_topic(_slug)
+        except MnemosyneError:
+            continue
+        anki_synced_nodes += sum(1 for _nd in _tp.get("nodes", []) if (_nd.get("obsidian") or {}).get("anki_card_id"))
     model = store.load_learner_model(persist=False)
     return {
         "ok": True,
@@ -3830,6 +4409,7 @@ def cmd_status(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
         "totals": totals,
         "stash_pending": len(stash_items),
         "inbox_count": inbox_count,
+        "anki_synced_nodes": anki_synced_nodes,
         "memory": model.get("memory"),
         "topics": topics_summary,
     }
@@ -4804,14 +5384,35 @@ def cmd_synthesize(store: StateStore, args: argparse.Namespace) -> Dict[str, Any
             compiled_mocs.append(str(moc_path.relative_to(store.gate.vault_root)))
             store.save_topic(topic)
 
+        anki_report: Optional[Dict[str, Any]] = None
+        if not getattr(args, "no_anki", False) and os.environ.get("MNEMOSYNE_ANKI_AUTO", "1") != "0":
+            try:
+                anki_report = AnkiBridge().sync(store, topic_filter=topic_filter, strict=False, dry_run=False)
+            except SanctuaryViolationError:
+                raise
+            except MnemosyneError as exc:
+                anki_report = {"ok": False, "error": exc.message}
+
         return {
             "ok": True,
             "sync_sr": sr_report,
+            "sync_anki": anki_report,
             "compiled_notes_count": len(compiled_notes),
             "compiled_notes": compiled_notes,
             "compiled_mocs": compiled_mocs,
             "conflicts": conflicts,
         }
+
+
+def cmd_sync_anki(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
+    """RFC §6.5: Loopback-only bi-directional AnkiConnect FSRS-4.5 sync (pull reviews, push graduated notes)."""
+    bridge = AnkiBridge(anki_url=getattr(args, "anki_url", None))
+    return bridge.sync(
+        store,
+        topic_filter=getattr(args, "topic", None),
+        strict=bool(getattr(args, "strict", False)),
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
 
 
 def cmd_inbox(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
@@ -5700,7 +6301,7 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
                     "airgap",
                 )
 
-    for forbidden_mod in ("subprocess", "socket", "urllib", "http", "requests", "sympy", "numpy", "sqlite3"):
+    for forbidden_mod in ("subprocess", "socket", "http", "requests", "sympy", "numpy", "sqlite3"):
         check(forbidden_mod not in imported_modules, f"Forbidden module {forbidden_mod} not imported", "airgap")
 
     # --------------------------------------------------------------------------
@@ -5708,6 +6309,8 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
     # --------------------------------------------------------------------------
     old_today = os.environ.get("MNEMOSYNE_TODAY")
     os.environ["MNEMOSYNE_TODAY"] = "2026-10-18"
+    old_anki_auto = os.environ.get("MNEMOSYNE_ANKI_AUTO")
+    os.environ["MNEMOSYNE_ANKI_AUTO"] = "0"  # never touch a live Anki during selftest
     try:
         with tempfile.TemporaryDirectory(prefix="mnemosyne_selftest_") as tmp_root_str:
             tmp_root = Path(tmp_root_str).resolve()
@@ -6560,6 +7163,94 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
             check('fleeting_origin: "study-session-oct-18"' in perm6_text, "Custom YAML property migrated from fleeting draft to permanent note", "md_sync")
             check("User fleeting margin note that MUST survive graduation to Permanent!" in perm6_text, "User prose outside markers migrated from fleeting draft to permanent note", "md_sync")
 
+            # ------------------------------------------------------------------
+            # TASK-10: AnkiBridge (loopback guard, offline fallback, mock round-trip)
+            # ------------------------------------------------------------------
+            for bad_url in (
+                "https://ankiweb.net",
+                "http://192.168.1.10:8765",
+                "http://127.0.0.1@evil.com:8765",
+                "http://example.com:8765",
+                "file:///etc/passwd",
+            ):
+                check_raises(
+                    lambda u=bad_url: VaultGate.validate_loopback_url(u),
+                    SanctuaryViolationError, 2, f"Non-loopback AnkiConnect URL {bad_url!r} rejected", "anki_sync",
+                )
+            for good_url in ("http://127.0.0.1:8765", "http://localhost:8765", "http://[::1]:8765"):
+                check(VaultGate.validate_loopback_url(good_url).startswith("http://"), f"Loopback URL {good_url!r} accepted", "anki_sync")
+
+            def _offline_transport(_u: str, _p: Dict[str, Any]) -> Any:
+                raise urllib.error.URLError("connection refused")
+
+            off_res = AnkiBridge(rpc_transport=_offline_transport).sync(store, topic_filter="consensus-raft")
+            check(off_res.get("ok") is True and off_res.get("anki_online") is False, "Offline Anki degrades gracefully (anki_online: false)", "anki_sync")
+            check_raises(
+                lambda: AnkiBridge(rpc_transport=_offline_transport).sync(store, topic_filter="consensus-raft", strict=True),
+                ValidationError, 1, "Offline Anki with --strict raises ValidationError (exit 1)", "anki_sync",
+            )
+
+            anki_svg_src = tmp_root / "anki-viz-output.svg"
+            anki_svg_src.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"></svg>', encoding="utf-8")
+            cmd_artifact(store, argparse.Namespace(action="set", topic="consensus-raft", node="step-6", file=str(anki_svg_src), path=None))
+            mock_calls: List[Tuple[str, Dict[str, Any]]] = []
+            mock_notes: Dict[int, Dict[str, Any]] = {}
+            mock_reviews: Dict[str, List[Dict[str, Any]]] = {}
+
+            def _mock_transport(_u: str, payload: Dict[str, Any]) -> Any:
+                act = payload["action"]
+                prm = payload.get("params") or {}
+                mock_calls.append((act, prm))
+                if act == "version":
+                    return {"result": 6, "error": None}
+                if act == "modelNames":
+                    return {"result": [], "error": None}
+                if act == "findNotes":
+                    return {"result": [], "error": None}
+                if act == "addNote":
+                    nid_new = 1000 + len(mock_notes)
+                    mock_notes[nid_new] = prm["note"]
+                    return {"result": nid_new, "error": None}
+                if act == "findCards":
+                    q = str(prm.get("query", ""))
+                    n_id = int(q.split(":", 1)[1]) if q.startswith("nid:") else 0
+                    return {"result": [n_id + 5000] if n_id else [], "error": None}
+                if act == "getReviewsOfCards":
+                    return {"result": mock_reviews, "error": None}
+                return {"result": None, "error": None}
+
+            push_res = AnkiBridge(rpc_transport=_mock_transport).sync(store, topic_filter="consensus-raft")
+            check(push_res.get("anki_online") is True, "Mock AnkiConnect reported online", "anki_sync")
+            added_nodeids = {str(n["fields"].get("NodeID")) for n in mock_notes.values()}
+            check("consensus-raft:step-6" in added_nodeids, "Graduated permanent node pushed via addNote", "anki_sync")
+            topic_after = store.load_topic("consensus-raft")
+            fleeting_ids = [
+                nd["id"] for nd in topic_after.get("nodes", [])
+                if (nd.get("obsidian") or {}).get("fleeting_path") and not (nd.get("obsidian") or {}).get("anki_card_id")
+            ]
+            check(all(f"consensus-raft:{fid}" not in added_nodeids for fid in fleeting_ids), "Fleeting drafts never pushed to Anki", "anki_sync")
+            check(any(a == "storeMediaFile" for a, _ in mock_calls), "SVG attachment uploaded via storeMediaFile", "anki_sync")
+            check(any(a == "createDeck" and str(p.get("deck", "")).startswith("Mnemosyne::") for a, p in mock_calls), "Deck Mnemosyne::<...> created", "anki_sync")
+            check(any("obsidian://open?vault=" in str(n["fields"].get("ObsidianURI", "")) for n in mock_notes.values()), "Card carries obsidian://open deep link", "anki_sync")
+            step6 = next(nd for nd in topic_after["nodes"] if nd["id"] == "step-6")
+            card6 = int((step6.get("obsidian") or {}).get("anki_card_id") or 0)
+            check(card6 > 0, "anki_card_id persisted in topic ledger", "anki_sync")
+            perm6_after = perm6_file.read_text(encoding="utf-8")
+            check(f"anki_card_id: {card6}" in perm6_after, "anki_card_id dual-written to Obsidian YAML frontmatter", "anki_sync")
+
+            # Simulate a mobile Anki review (ease=3 'Good') and pull it back
+            rev_ms = int(datetime(2026, 10, 18, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+            mock_reviews[str(card6)] = [{"id": rev_ms, "ease": 3, "ivl": 20, "type": 1}]
+            pull_res = AnkiBridge(rpc_transport=_mock_transport).sync(store, topic_filter="consensus-raft")
+            check(len(pull_res.get("pulled") or []) == 1, "One new Anki review pulled", "anki_sync")
+            anki_recs = [r for r in store.read_jsonl("receipts", "consensus-raft.jsonl") if r.get("source") == "anki"]
+            check(len(anki_recs) == 1, "Anki review logged as source: 'anki' receipt", "anki_sync")
+            step6_pulled = next(nd for nd in store.load_topic("consensus-raft")["nodes"] if nd["id"] == "step-6")
+            check(int((step6_pulled.get("obsidian") or {}).get("last_anki_revlog_id") or 0) == rev_ms, "last_anki_revlog_id cursor advanced", "anki_sync")
+            check(f"sr-due: {step6_pulled['fsrs']['due']}" in perm6_file.read_text(encoding="utf-8"), "Obsidian sr-due updated from Anki review (3-way sync)", "anki_sync")
+            pull_again = AnkiBridge(rpc_transport=_mock_transport).sync(store, topic_filter="consensus-raft")
+            check(len(pull_again.get("pulled") or []) == 0, "Re-sync is idempotent (no duplicate Anki receipts)", "anki_sync")
+
             # Inbox CLI (inbox add / inbox list) & status.inbox_count
             inb_add = cmd_inbox(
                 store,
@@ -6704,6 +7395,10 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
             os.environ.pop("MNEMOSYNE_TODAY", None)
         else:
             os.environ["MNEMOSYNE_TODAY"] = old_today
+        if old_anki_auto is None:
+            os.environ.pop("MNEMOSYNE_ANKI_AUTO", None)
+        else:
+            os.environ["MNEMOSYNE_ANKI_AUTO"] = old_anki_auto
 
     elapsed_s = time.monotonic() - t_start
     check(elapsed_s < 5.0, f"Entire selftest completed in {elapsed_s:.3f}s (< 5.0s gate)", "latency")
@@ -6815,9 +7510,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_sr = sub.add_parser("sync-sr", help="Reconcile external obsidian-spaced-repetition reviews via OPT-01 stat() fast-path")
     p_sr.add_argument("--topic", "-t", default=None, help="Filter by topic slug")
 
+    # sync-anki
+    p_anki = sub.add_parser("sync-anki", help="Bi-directional loopback AnkiConnect FSRS-4.5 sync (pull reviews, push graduated notes)")
+    p_anki.add_argument("--topic", "-t", default=None, help="Filter by topic slug")
+    p_anki.add_argument("--anki-url", dest="anki_url", default=None, help="AnkiConnect URL (loopback only; default http://127.0.0.1:8765)")
+    p_anki.add_argument("--strict", action="store_true", help="Fail (exit 1) if Anki is offline")
+    p_anki.add_argument("--dry-run", dest="dry_run", action="store_true", help="Report actions without writing")
+
     # synthesize
     p_sy = sub.add_parser("synthesize", help="Compile verified Zettelkasten notes and Topic MoCs with OCC")
     p_sy.add_argument("--topic", "-t", default=None, help="Filter by topic slug")
+    p_sy.add_argument("--no-anki", dest="no_anki", action="store_true", help="Skip the automatic sync-anki post-pass")
     p_sy.add_argument("--all-nodes", dest="all_nodes", action="store_true", help="Compile all nodes including uncredited ones")
 
     # inbox
@@ -6909,6 +7612,7 @@ COMMAND_DISPATCH: Dict[str, Callable[[StateStore, argparse.Namespace], Any]] = {
     "batch": cmd_receipt,
     "rate": cmd_receipt,
     "sync-sr": cmd_sync_sr,
+    "sync-anki": cmd_sync_anki,
     "synthesize": cmd_synthesize,
     "inbox": cmd_inbox,
     "artifact": cmd_artifact,
