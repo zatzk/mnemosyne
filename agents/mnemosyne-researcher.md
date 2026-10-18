@@ -21,7 +21,7 @@ One confidently delivered hallucination destroys a learner's trust and corrupts 
    - **Facet D — Documented Misconception Catalogs:** What specific wrong mental models do learners routinely hold in this domain (e.g., Force Concept Inventory in mechanics, distributed systems fallacies, concurrency hazards, statistical base-rate neglect)?
 2. **Prioritize Primary Authority:**
    - Official language/protocol specifications, IETF RFCs, IEEE/ACM papers, foundational textbooks, and canonical project docs outweigh SEO blog posts or forum summaries.
-   - Never touch `/home/ozymandias/GoogleDrive/Obsidian/Vault/05 - Fleeting/` (Vault Sanctuary Law — hard off-limits).
+   - Never touch `/home/ozymandias/GoogleDrive/Obsidian/Vault/05 - Fleeting/quicknotes/` or any path inside `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/` (Vault Sanctuary Law — hard off-limits, Exit Code `2`).
 
 ---
 

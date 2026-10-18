@@ -1,6 +1,6 @@
 # Mnemosyne (`v1.0.0`) — Obsidian-Native AI Study Engine & Cognitive Harness
 
-> **Learn from Unconditional Truths. Derive by 3Blue1Brown Motivated Discovery. Verify via Blind Zero-Context Assessment. Schedule with Deterministic FSRS-4.5 + `obsidian-spaced-repetition`. Compile into a Living Obsidian Zettelkasten.**
+> **Learn from Unconditional Truths. Derive by 3Blue1Brown Motivated Discovery. Verify via Blind Zero-Context Assessment. Schedule with Deterministic FSRS-4.5 + `obsidian-spaced-repetition`. Graduate from Fleeting Study Drafts into a Living Obsidian Zettelkasten.**
 
 `mnemosyne` is an air-gapped, CLI-first, Obsidian-native AI Study Engine and Skills Harness that unifies the epistemological teaching philosophy of **`amosblomqvist/learn`** with the cognitive science, cryptographic claim-check blind grading, and FSRS-4.5 scheduling engine of **`nagisanzenin/engram`**.
 
@@ -8,16 +8,16 @@
 
 ## 1. System Architecture & C4 Component Topology
 
-All state transitions, DAG validation, binary-search frontier bracketing, cryptographic Claim-Check stashing (`stash_sha256`), FSRS-4.5 mathematical scheduling, bi-directional `obsidian-spaced-repetition` reconciliation (`sync-sr`), Optimistic Concurrency Control (OCC), and Zettelkasten Markdown compilation are executed deterministically by a single zero-dependency Python 3.10+ standard-library CLI engine (`scripts/mnemosyne.py`).
+All state transitions, Study Inbox management (`inbox add` / `inbox list`), DAG validation, binary-search frontier bracketing, cryptographic Claim-Check stashing (`stash_sha256`), FSRS-4.5 mathematical scheduling, bi-directional `obsidian-spaced-repetition` reconciliation (`sync-sr`), Optimistic Concurrency Control (OCC), and Full Zettelkasten Graduation (`05 - Fleeting/mnemosyne/<Topic>/` $\rightarrow$ `02 - Areas/` or `04 - Permanent/`) are executed deterministically by a single zero-dependency Python 3.10+ standard-library CLI engine (`scripts/mnemosyne.py`).
 
 ```mermaid
 flowchart TB
     subgraph Harness["5 Core Skills (skills/*/SKILL.md)"]
-        Learn["/learn\nAcquisition & Frontier Probe"]
+        Learn["/learn\nAcquisition, Inbox Triage & Frontier Probe"]
         Review["/review\nInterleaved Retrieval & Lapse Re-Teach"]
         Visualize["/visualize\nTri-Modal Visual Director"]
-        Synthesize["/synthesize\nZettelkasten & MoC Compiler"]
-        Coach["/coach\n25-Min Study Plan, Refit & Gold Audit"]
+        Synthesize["/synthesize\nZettelkasten Compiler & Graduation"]
+        Coach["/coach\n25-Min Study Plan, Inbox, Refit & Gold Audit"]
     end
 
     subgraph Agents["6 Context-Isolated Subagents (agents/*.md)"]
@@ -30,21 +30,22 @@ flowchart TB
     end
 
     subgraph Engine["Deterministic Python 3.10+ Core (scripts/mnemosyne.py — Stdlib Only)"]
-        VaultGate["VaultGate Sanctuary & Path Guard\n(Hard Exit Code 2 on 05 - Fleeting / .git / .obsidian)"]
+        VaultGate["VaultGate Sanctuary & Path Guard\n(Hard Exit Code 2 on 05 - Fleeting/quicknotes, non-mnemosyne Fleeting, .git, .obsidian)"]
         LockMgr["Re-Entrant POSIX PID Lock & Atomic I/O\n(.mnemosyne.lock + .mnemosyne_tmp_* + os.replace)"]
         DAGEngine["DAGEngine & Heavy-Path Binary Search\n(validate-dag, add-topic, next --frontier-of)"]
         StashEngine["Claim-Check Stash & Zero-Context Export\n(sid + stash_sha256 Verification)"]
         FSRSEngine["FSRS-4.5 Scheduler & sync-sr Bridge\n(W[0..16], Dose Caps, SR Inference)"]
         ASTEval["Safe AST Math Verifier\n(verify-expr: <=256 nodes, <=500ms, 5-Slip Check)"]
-        MDCompiler["Span-Preserving YAML & Markdown Compiler\n(OCC st_mtime_ns + mnemosyne_body_hash)"]
+        MDCompiler["Span-Preserving YAML, Fleeting Drafts & Graduation Compiler\n(OCC st_mtime_ns + mnemosyne_body_hash)"]
     end
 
     subgraph Vault["Canonical Obsidian Vault (MNEMOSYNE_VAULT_PATH)"]
         Ledger[("99 - Meta/mnemosyne-state/\nlearner-model.json, topics/*.json,\nreceipts/*.jsonl, stash.jsonl, conflicts/")]
         Attach[("99 - Meta/attachments/\n<topic>-<node>.svg | -explorable.html")]
+        FleetingMnem[("05 - Fleeting/mnemosyne/\ninbox/ (Study Seeds)\n<Topic>/<Node Title>.md (status: fleeting)")]
         MOCs[("00 - Maps of Content/\n<Topic> MoC.md")]
-        Notes[("02 - Areas/ & 04 - Permanent/\nAtomic Zettelkasten Notes")]
-        Sanctuary[("05 - Fleeting/ | .git/ | .obsidian/\n[INVIOLABLE SANCTUARY — EXIT CODE 2]")]
+        Notes[("02 - Areas/ & 04 - Permanent/\nGraduated Zettelkasten Notes (status: permanent)")]
+        Sanctuary[("05 - Fleeting/quicknotes/ (Omarchy Widget)\n05 - Fleeting/* (outside mnemosyne/) | .git/ | .obsidian/\n[INVIOLABLE SANCTUARY — EXIT CODE 2]")]
     end
 
     Learn --> Researcher & Architect & Assessor & Engine
@@ -54,7 +55,8 @@ flowchart TB
     Coach --> Assessor & Engine
 
     Engine --> VaultGate --> LockMgr
-    LockMgr --> Ledger & Attach & MOCs & Notes
+    LockMgr --> Ledger & Attach & FleetingMnem & MOCs & Notes
+    FleetingMnem ==>|"Auto-Graduates on score >= 3\n(carries user prose, removes draft)"| Notes
     VaultGate -.->|"BLOCKED (sys.exit(2))"| Sanctuary
 ```
 
@@ -76,11 +78,11 @@ mnemosyne/
 │   │   ├── pedagogy.md                      # Unconditional Truths, 3B1B Discovery, Binary-Search Probe, 8-Beat Loop
 │   │   ├── rubrics.md                       # 1-4 FSRS rubrics, produced:false cap (<=2), JSON schemas
 │   │   ├── visual-routing.md                # Content-affordance matrix (Mermaid / SVG / Offline CSP HTML)
-│   │   ├── obsidian-conventions.md          # Sanctuary Law (Exit 2), Dual-Write YAML, Managed Blocks
+│   │   ├── obsidian-conventions.md          # Sanctuary Law (Exit 2), Fleeting Graduation, Dual-Write YAML, Managed Blocks
 │   │   ├── dialogue-grammar.md              # Companion reference for 8-Beat Dialogue Grammar
 │   │   ├── rubric-contract.md               # Companion reference for Probe-Rubric Co-Authoring
 │   │   ├── explorable-contract.md           # Companion reference for 7-Clause Explorable Contract
-│   │   └── obsidian-frontmatter-spec.md     # Companion reference for Dual-Write YAML Frontmatter
+│   │   └── obsidian-frontmatter-spec.md     # Companion reference for Dual-Write YAML Frontmatter & Graduation
 │   ├── learn/SKILL.md                       # /learn workflow
 │   ├── review/SKILL.md                      # /review workflow
 │   ├── visualize/SKILL.md                   # /visualize workflow
@@ -104,7 +106,7 @@ mnemosyne/
 
 ## 3. Core Pedagogical & Engineering Guarantees (`RN-01` .. `RN-10`)
 
-1. **Receipts or It Didn't Happen (`RN-01`):** No concept node transitions from `new` to `learning`/`review`, updates its FSRS schedule, or earns a `✅` mastery badge in an Obsidian MoC without a cryptographically verified append-only receipt (`sid` + `stash_sha256`).
+1. **Receipts or It Didn't Happen (`RN-01`):** No concept node transitions from `new` to `learning`/`review`, graduates from `05 - Fleeting/mnemosyne/` to `02 - Areas/` or `04 - Permanent/`, updates its FSRS schedule, or earns a `✅` mastery badge in an Obsidian MoC without a cryptographically verified append-only receipt (`sid` + `stash_sha256`).
 2. **Strict Separation of Powers (`RN-02`):** The conversational tutor is forbidden from assigning FSRS-driving grades. `mnemosyne.py stash export-assessor --sid <SID>` emits a context-stripped JSON envelope containing *only* `{sid, stash_sha256, topic, node, kind, event_kind, node_kind, claim, probe, rubric, production, produced, confidence}` for the isolated `mnemosyne-assessor`. Furthermore, if `"produced": false` (learner asked to be told or did not generate independently), the score is hard-capped at `score <= 2` (`partial` / `hard`).
 3. **Binary-Search Prerequisite Frontier Probing (`RN-03`):** Before teaching a strand, the tutor brackets the learner's prerequisite frontier (`floor` and `ceiling`) in $\le \lceil \log_2 N \rceil + 2$ probes via `next --frontier-of`.
 4. **Unconditional Truths & 3Blue1Brown Motivated Discovery (`RN-04`):** Every DAG node and compiled Obsidian note anchors first on a caveat-free **Unconditional Truth** (universal statement or generative definition) and walks through **Motivated Discovery** (*Pain before Pill* $\rightarrow$ *Concrete Special Case* $\rightarrow$ *General Abstraction*).
@@ -113,11 +115,13 @@ mnemosyne/
 7. **Knowledge-Kind Routing & Safe AST Math Verifier (`RN-07`, `FR-11`):** Concepts use Socratic/Contrast-First derivation; Procedures use the 4-step Worked-Example Ladder and deterministic verification via `mnemosyne.py verify-expr` (distinguishing execution `"slip"` floored at $G=2$ from `"conceptual"` lapse $G=1$); Facts (`arbitrary: true`) route to mnemonics + spacing.
 8. **Tri-Modal Self-Verifying Visuals (`RN-08`):** Visual subagents cap render-and-inspect loops at 3 iterations: `mnemosyne-mermaid-maker` outputs native ```` ```mermaid ```` fences; `mnemosyne-svg-maker` outputs verified SVGs to `99 - Meta/attachments/`; `mnemosyne-artifact-smith` outputs 100% offline CSP-locked HTML explorables to `99 - Meta/attachments/`.
 9. **Dual-Write FSRS-4.5 $\leftrightarrow$ `obsidian-spaced-repetition` Bridge (`RN-09`, `ASR-05`):** Seamless review in either Obsidian UI or the CLI.
-10. **Inviolable Vault Sanctuary (`RN-10`, `CON-03`):** `VaultGate` enforces a hard block (`sys.exit(2)`) on any read or write targeting `05 - Fleeting/`, `.git/`, or `.obsidian/`.
+10. **Inviolable Vault Sanctuary & Full Zettelkasten Graduation (`RN-10`, `CON-03`):**
+    - `VaultGate` enforces a hard block (`sys.exit(2)`) on `05 - Fleeting/quicknotes/` (Omarchy QuickNote widget in `~/.config/omarchy/shell.json`), any path inside `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/`, `.git/`, and `.obsidian/`.
+    - `05 - Fleeting/mnemosyne/` hosts the Study Inbox (`05 - Fleeting/mnemosyne/inbox/`) and fleeting study drafts (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`, `status: fleeting`), which automatically graduate to `02 - Areas/` or `04 - Permanent/` (`status: permanent`) upon passing blind assessment (`score >= 3`).
 
 ---
 
-## 4. Obsidian Vault Setup & Folder Taxonomy
+## 4. Obsidian Vault Setup, Sanctuary Partition & Zettelkasten Graduation
 
 Mnemosyne resolves the canonical Obsidian Vault via `MNEMOSYNE_VAULT_PATH` (defaulting to `/home/ozymandias/GoogleDrive/Obsidian/Vault` when present, or the repository submodule `./vault/Vault`):
 
@@ -127,22 +131,31 @@ python3 scripts/mnemosyne.py init
 python3 scripts/mnemosyne.py doctor
 ```
 
-| Vault Path | Role & Access Policy |
+| Vault Path | Role, Lifecycle Stage & Access Policy |
 | :--- | :--- |
-| `00 - Maps of Content/<Topic> MoC.md` | Auto-synthesized Topic Maps of Content with Mermaid dependency graphs (`✅`, `🔄`, `🔒`) and `[[Wikilinks]]`. |
-| `02 - Areas/<Domain>/<Node Title>.md` | Domain-scoped atomic Zettelkasten notes (`note_target: "02 - Areas"`). |
-| `04 - Permanent/<Node Title>.md` | Evergreen atomic Zettelkasten notes (`note_target: "04 - Permanent"`). |
-| `99 - Meta/00 - Templates/` | Read-only note templates. |
-| `99 - Meta/attachments/` | Verified `.svg` diagrams, interactive `-explorable.html` files, and `report.html`. |
-| `99 - Meta/mnemosyne-state/` | Authoritative JSON/JSONL ledger (`learner-model.json`, `topics/*.json`, `receipts/*.jsonl`, `stash.jsonl`, `misconceptions.json`, `experiments.json`, `conflicts/`). |
-| **`05 - Fleeting/`**, **`.git/`**, **`.obsidian/`** | **INVIOLABLE SANCTUARY — Hard Exit Code `2` on any access attempt.** |
+| **`05 - Fleeting/quicknotes/`** *(and `05 - Fleeting/*` outside `mnemosyne/`)* | **INVIOLABLE SANCTUARY — Hard Exit Code `2` on any access attempt.** Reserved for the user's Omarchy QuickNote widget (`~/.config/omarchy/shell.json`) and private fleeting notes. |
+| **`05 - Fleeting/mnemosyne/inbox/`** | **Study Inbox (`inbox add` / `inbox list`):** Raw study ideas, questions, and reading notes dropped by the user or CLI to be picked up by `/coach` and `/learn`. |
+| **`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`** | **Fleeting Study Drafts (`status: fleeting`):** In-progress / unmastered nodes (`learning`, `relearning`, `score <= 2`, or stashed drafts). |
+| **`00 - Maps of Content/<Topic> MoC.md`** | Auto-synthesized Topic Maps of Content with Mermaid dependency graphs (`✅`, `🔄`, `🔒`) and `[[Wikilinks]]`. |
+| **`02 - Areas/<Domain>/<Topic>/<Node Title>.md`** *(or `02 - Areas/<Domain>/`)* | **Graduated Domain Notes (`status: permanent`):** Auto-graduated from `05 - Fleeting/mnemosyne/<Topic>/` once `score >= 3` (`review` state) when `note_target: "02 - Areas"`. |
+| **`04 - Permanent/<Node Title>.md`** | **Graduated Evergreen Notes (`status: permanent`):** Auto-graduated from `05 - Fleeting/mnemosyne/<Topic>/` once `score >= 3` (`review` state) when `note_target: "04 - Permanent"`. |
+| **`99 - Meta/00 - Templates/`** | Read-only note templates. |
+| **`99 - Meta/attachments/`** | Verified `.svg` diagrams, interactive `-explorable.html` files, and `report.html`. |
+| **`99 - Meta/mnemosyne-state/`** | Authoritative JSON/JSONL ledger (`learner-model.json`, `topics/*.json`, `receipts/*.jsonl`, `stash.jsonl`, `misconceptions.json`, `experiments.json`, `conflicts/`). |
+| **`.git/`**, **`.obsidian/`** | **INVIOLABLE SANCTUARY — Hard Exit Code `2` on any access attempt.** |
+
+### Full Zettelkasten Graduation Lifecycle
+1. **Study Inbox (`05 - Fleeting/mnemosyne/inbox/`):** Drop raw topic ideas or questions into `05 - Fleeting/mnemosyne/inbox/` (or run `python3 scripts/mnemosyne.py inbox add`). `/coach` and `/learn` list them via `python3 scripts/mnemosyne.py inbox list`.
+2. **Fleeting Draft (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`):** While a node is in acquisition (`learning`, `relearning`, `score <= 2`, or stashed draft), `mnemosyne.py synthesize` writes the note to `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` with `status: fleeting`.
+3. **Permanent Graduation (`02 - Areas/` or `04 - Permanent/`):** Once the node passes blind assessment (`score >= 3` / `review` state), `mnemosyne.py synthesize` automatically graduates the note to `02 - Areas/<Domain>/<Topic>/` or `04 - Permanent/` with `status: permanent`, **carrying over any user prose written outside `<!-- mnemosyne:start/end -->` (and user YAML keys)** and **removing the fleeting draft** from `05 - Fleeting/mnemosyne/<Topic>/`.
 
 ---
 
 ## 5. FSRS-4.5 $\leftrightarrow$ `obsidian-spaced-repetition` Mathematical Bridge
 
 ### 5.1 Forward Mapping (`FSRS-4.5 -> Markdown YAML Frontmatter`)
-When `mnemosyne.py synthesize` compiles a note into `02 - Areas/` or `04 - Permanent/`, it preserves all user-owned YAML keys byte-for-byte (`SEC-YAML-01`) and dual-writes:
+When `mnemosyne.py synthesize` compiles a note (either as a fleeting draft in `05 - Fleeting/mnemosyne/<Topic>/` or a graduated note in `02 - Areas/` / `04 - Permanent/`), it preserves all user-owned YAML keys byte-for-byte (`SEC-YAML-01`) and dual-writes:
+- **Zettelkasten Lifecycle Status:** `status: fleeting` (in `05 - Fleeting/mnemosyne/<Topic>/`) or `status: permanent` (in `02 - Areas/` and `04 - Permanent/`).
 - **Native FSRS-4.5 Properties:** `fsrs_state`, `fsrs_stability` ($S$), `fsrs_difficulty` ($D \in [1, 10]$), `fsrs_due` (`"YYYY-MM-DD"`), `fsrs_last`, `fsrs_reps`, `fsrs_lapses`, `mnemosyne_topic`, `mnemosyne_node`, `mnemosyne_sid`, `mnemosyne_body_hash`, `mnemosyne_schema: 1`.
 - **`obsidian-spaced-repetition` Properties (Unquoted Literals):**
   - `sr-due: YYYY-MM-DD` (matches `fsrs_due`)
@@ -171,14 +184,16 @@ Running `python3 scripts/mnemosyne.py sync-sr` (also invoked automatically befor
 ### Standard Exit Codes
 - **`0` (`OK`):** Command succeeded deterministically.
 - **`1` (`Validation / State Error`):** Invalid DAG, cycle detected, rubric stem-mirroring, `stash_sha256` mismatch, or invalid arguments.
-- **`2` (`Security / Sanctuary Violation`):** Attempted access to `05 - Fleeting/`, `.git/`, `.obsidian/`, path traversal outside Vault, or forbidden CSP/AST constructs.
+- **`2` (`Security / Sanctuary Violation`):** Attempted access to `05 - Fleeting/quicknotes/`, any path in `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/`, `.git/`, `.obsidian/`, path traversal outside Vault, or forbidden CSP/AST constructs.
 - **`3` (`Concurrency / Corrupted Markdown Conflict`):** `.mnemosyne.lock` timeout or malformed YAML frontmatter / mismatched `<!-- mnemosyne:start/end -->` markers on an existing target note (never clobbers user files).
 
 ### Command Summary
 
 ```bash
-# 1. Initialization, Health & Self-Test
+# 1. Initialization, Health, Study Inbox & Self-Test
 python3 scripts/mnemosyne.py init
+python3 scripts/mnemosyne.py inbox list
+python3 scripts/mnemosyne.py inbox add --title "Raft Pre-Vote Extension" --file /tmp/inbox-note.md
 python3 scripts/mnemosyne.py doctor [--repair]
 python3 scripts/mnemosyne.py selftest
 
@@ -203,7 +218,7 @@ python3 scripts/mnemosyne.py verify-expr --expected "n*(n-1)/2" --actual "0.5*n*
 python3 scripts/mnemosyne.py misconception add --topic <slug> --node <node_id> --file /tmp/misc.json
 python3 scripts/mnemosyne.py artifact set --topic <slug> --node <node_id> --file /tmp/viz-output.svg
 
-# 6. Bi-Directional Obsidian SR Sync & Zettelkasten Synthesis
+# 6. Bi-Directional Obsidian SR Sync & Full Zettelkasten Graduation Synthesis
 python3 scripts/mnemosyne.py sync-sr
 python3 scripts/mnemosyne.py synthesize [--topic <slug> | --all]
 

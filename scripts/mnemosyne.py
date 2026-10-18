@@ -336,15 +336,20 @@ class NoteEnvelope:
     body_hash: str
     st_mtime_ns: int
     st_size: int
+    status: str = "permanent"
+    fleeting_path: Optional[str] = None
     conflict_snapshot: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
             "note_path": self.note_path,
+            "status": self.status,
             "body_hash": self.body_hash,
             "st_mtime_ns": int(self.st_mtime_ns),
             "st_size": int(self.st_size),
         }
+        if self.fleeting_path:
+            d["fleeting_path"] = self.fleeting_path
         if self.conflict_snapshot:
             d["conflict_snapshot"] = self.conflict_snapshot
         return d
@@ -447,6 +452,7 @@ WRITE_ALLOWLIST_PREFIXES: Tuple[str, ...] = (
     "00 - Maps of Content",
     "02 - Areas",
     "04 - Permanent",
+    "05 - Fleeting/mnemosyne",
     "99 - Meta/attachments",
     "99 - Meta/mnemosyne-state",
 )
@@ -455,6 +461,7 @@ READ_ALLOWLIST_PREFIXES: Tuple[str, ...] = (
     "00 - Maps of Content",
     "02 - Areas",
     "04 - Permanent",
+    "05 - Fleeting/mnemosyne",
     "99 - Meta/attachments",
     "99 - Meta/mnemosyne-state",
     "99 - Meta/00 - Templates",
@@ -532,13 +539,21 @@ class VaultGate:
 
     @classmethod
     def _check_parts_for_sanctuary(cls, path_obj: Path) -> None:
-        for part in path_obj.parts:
+        parts = path_obj.parts
+        for idx, part in enumerate(parts):
             norm = cls._normalize_part(part)
-            if norm in _SANCTUARY_PARTS:
+            if norm in (".git", ".obsidian"):
                 raise SanctuaryViolationError(
                     f"SANCTUARY VIOLATION: Access to {part!r} is strictly forbidden (Exit Code 2).",
                     details={"violating_path": str(path_obj), "component": part},
                 )
+            if norm == "05 - fleeting":
+                next_part = parts[idx + 1] if (idx + 1) < len(parts) else ""
+                if part.strip() != "05 - Fleeting" or next_part.strip() != "mnemosyne":
+                    raise SanctuaryViolationError(
+                        f"SANCTUARY VIOLATION: Access to {part!r} outside '05 - Fleeting/mnemosyne' is strictly forbidden (Exit Code 2).",
+                        details={"violating_path": str(path_obj), "component": part, "subcomponent": next_part},
+                    )
 
     @staticmethod
     def _is_subpath(child: Path, parent: Path) -> bool:
@@ -1046,6 +1061,7 @@ class StateStore:
                 "00 - Maps of Content",
                 "02 - Areas",
                 "04 - Permanent",
+                "05 - Fleeting/mnemosyne/inbox",
                 "99 - Meta/attachments",
                 "99 - Meta/mnemosyne-state",
             ):
@@ -2926,6 +2942,7 @@ MANAGED_YAML_ORDER: Tuple[str, ...] = (
     "title",
     "aliases",
     "tags",
+    "status",
     "mnemosyne_schema",
     "mnemosyne_topic",
     "mnemosyne_node",
@@ -3313,24 +3330,55 @@ class MDCompiler:
         by_id: Dict[str, Dict[str, Any]],
     ) -> NoteEnvelope:
         """
-        Compiles a single verified node into 04 - Permanent/ or 02 - Areas/<Domain>/ with
-        SEC-YAML-01 span preservation and OCC conflict snapshotting.
+        Compiles a single node into either:
+          - Fleeting stage: 05 - Fleeting/mnemosyne/<Sanitized Topic>/<Sanitized Node Title>.md (status: "fleeting")
+            when unmastered (fsrs.state in ("new", "learning", "relearning") and not yet graduated).
+          - Permanent stage: 04 - Permanent/ or 02 - Areas/<Domain>/ (status: "permanent")
+            once mastered (state == "review" or latest receipt score >= 3), migrating user prose
+            and custom YAML properties from any prior fleeting draft and unlinking the obsolete draft.
         """
         slug = topic["slug"]
         nid = node["id"]
+        topic_title = topic.get("title") or slug
+        sanitized_topic = VaultGate.sanitize_title(topic_title)
         sanitized_title = VaultGate.sanitize_title(node.get("title") or nid)
-        note_target = topic.get("note_target", "04 - Permanent")
-        if note_target == "02 - Areas":
-            domain_dir = VaultGate.sanitize_title(topic.get("domain") or "General")
-            rel_note_path = f"02 - Areas/{domain_dir}/{sanitized_title}.md"
-        else:
-            rel_note_path = f"04 - Permanent/{sanitized_title}.md"
 
-        abs_note_path = store.gate.validate_path(
-            store.gate.vault_root / rel_note_path,
+        rel_fleeting_path = f"05 - Fleeting/mnemosyne/{sanitized_topic}/{sanitized_title}.md"
+        abs_fleeting_path = store.gate.validate_path(
+            store.gate.vault_root / rel_fleeting_path,
             mode="w",
             require_in_vault=True,
         )
+
+        note_target = topic.get("note_target", "04 - Permanent")
+        if note_target == "02 - Areas":
+            domain_dir = VaultGate.sanitize_title(topic.get("domain") or "General")
+            rel_perm_path = f"02 - Areas/{domain_dir}/{sanitized_title}.md"
+        else:
+            rel_perm_path = f"04 - Permanent/{sanitized_title}.md"
+
+        abs_perm_path = store.gate.validate_path(
+            store.gate.vault_root / rel_perm_path,
+            mode="w",
+            require_in_vault=True,
+        )
+
+        obs_prev = node.get("obsidian") or {}
+        last_score = int(as_finite_float((latest_receipt or {}).get("score"), 0.0) or 0)
+        is_graduated = (
+            node.get("state") == "review"
+            or last_score >= 3
+            or (obs_prev.get("status") == "permanent" and abs_perm_path.exists())
+        )
+
+        if is_graduated:
+            note_status = "permanent"
+            rel_note_path = rel_perm_path
+            abs_note_path = abs_perm_path
+        else:
+            note_status = "fleeting"
+            rel_note_path = rel_fleeting_path
+            abs_note_path = abs_fleeting_path
 
         inner_managed = cls.render_managed_inner_block(
             topic, node, latest_receipt, node_misconceptions, by_id
@@ -3343,13 +3391,14 @@ class MDCompiler:
 
         managed_yaml_updates: Dict[str, Any] = {
             "title": node.get("title") or nid,
+            "status": note_status,
             "mnemosyne_schema": SCHEMA_VERSION,
             "mnemosyne_topic": slug,
             "mnemosyne_node": nid,
             "mnemosyne_kind": node.get("kind", "concept"),
             "mnemosyne_sid": last_sid,
             "mnemosyne_body_hash": new_body_hash,
-            "fsrs_state": node.get("state", "review"),
+            "fsrs_state": node.get("state", "review" if is_graduated else "learning"),
             "fsrs_stability": fsrs.s if fsrs.s is not None else 0.0,
             "fsrs_difficulty": fsrs.d if fsrs.d is not None else 5.0,
             "fsrs_due": fsrs.due or current_date().isoformat(),
@@ -3360,12 +3409,24 @@ class MDCompiler:
             "sr-interval": sr_fm.sr_interval,
             "sr-ease": sr_fm.sr_ease,
         }
-        req_tags = ["review", f"sr/{node.get('kind', 'concept')}", f"mnemosyne/{slug}"]
+        req_tags = [
+            "review" if is_graduated else "fleeting",
+            f"sr/{node.get('kind', 'concept')}",
+            f"mnemosyne/{slug}",
+        ]
         req_aliases = [str(node.get("title") or nid), nid]
 
         conflict_snapshot: Optional[str] = None
         existing_spans: Optional[List[Tuple[str, str]]] = None
         existing_parsed: Optional[Dict[str, Any]] = None
+
+        # Check existing target file OR fleeting draft to migrate on graduation
+        prev_fleeting_rel = obs_prev.get("fleeting_path") or rel_fleeting_path
+        abs_prev_fleeting = store.gate.validate_path(
+            store.gate.vault_root / prev_fleeting_rel,
+            mode="w",
+            require_in_vault=True,
+        )
 
         if abs_note_path.exists():
             existing_raw = abs_note_path.read_text(encoding="utf-8")
@@ -3374,9 +3435,22 @@ class MDCompiler:
             prefix, existing_inner, suffix = cls.split_managed_body(rest_body)
 
             disk_inner_hash = cls.compute_body_hash(existing_inner)
-            recorded_hash = (node.get("obsidian") or {}).get("body_hash") or existing_parsed.get("mnemosyne_body_hash")
+            recorded_hash = obs_prev.get("body_hash") or existing_parsed.get("mnemosyne_body_hash")
             if recorded_hash and disk_inner_hash != recorded_hash:
                 conflict_snapshot = store.snapshot_conflict(slug, nid, existing_raw)
+        elif is_graduated and abs_prev_fleeting.exists():
+            # Graduation migration: migrate user prose & custom YAML spans from fleeting draft
+            fleeting_raw = abs_prev_fleeting.read_text(encoding="utf-8")
+            existing_spans, existing_parsed, rest_body = cls.parse_frontmatter_spans(fleeting_raw)
+            prefix, existing_inner, suffix = cls.split_managed_body(rest_body)
+
+            disk_inner_hash = cls.compute_body_hash(existing_inner)
+            recorded_hash = obs_prev.get("body_hash") or existing_parsed.get("mnemosyne_body_hash")
+            if recorded_hash and disk_inner_hash != recorded_hash:
+                conflict_snapshot = store.snapshot_conflict(slug, nid, fleeting_raw)
+            # Remove "fleeting" tag from migrated tags so permanent note has clean "review" tag
+            if isinstance(existing_parsed.get("tags"), list):
+                existing_parsed["tags"] = [t for t in existing_parsed["tags"] if str(t).lstrip("#").strip() != "fleeting"]
         else:
             prefix = f"\n# {node.get('title') or nid}\n\n"
             suffix = (
@@ -3403,9 +3477,8 @@ class MDCompiler:
         # Pre-commit OCC stat check if file existed before
         if abs_note_path.exists() and conflict_snapshot is None:
             st_now = abs_note_path.stat()
-            obs_meta = node.get("obsidian") or {}
-            prev_mtime = obs_meta.get("st_mtime_ns")
-            prev_size = obs_meta.get("st_size")
+            prev_mtime = obs_prev.get("st_mtime_ns")
+            prev_size = obs_prev.get("st_size")
             if (
                 prev_mtime is not None
                 and prev_size is not None
@@ -3415,7 +3488,7 @@ class MDCompiler:
                 latest_raw = abs_note_path.read_text(encoding="utf-8")
                 sp2, pr2, rb2 = cls.parse_frontmatter_spans(latest_raw)
                 pfx2, in2, sfx2 = cls.split_managed_body(rb2)
-                if cls.compute_body_hash(in2) != (obs_meta.get("body_hash") or pr2.get("mnemosyne_body_hash")):
+                if cls.compute_body_hash(in2) != (obs_prev.get("body_hash") or pr2.get("mnemosyne_body_hash")):
                     conflict_snapshot = store.snapshot_conflict(slug, nid, latest_raw)
                 frontmatter_str = cls.patch_frontmatter(
                     sp2, pr2, managed_yaml_updates, req_tags, req_aliases
@@ -3427,11 +3500,22 @@ class MDCompiler:
         store.atomic_write_text(abs_note_path, full_markdown, require_in_vault=True)
         st_after = abs_note_path.stat()
 
+        # If graduated to permanent, unlink obsolete fleeting draft so there is never a duplicate
+        if is_graduated:
+            for fl_candidate in {abs_fleeting_path, abs_prev_fleeting}:
+                if fl_candidate.exists() and fl_candidate != abs_note_path:
+                    try:
+                        fl_candidate.unlink()
+                    except OSError:
+                        pass
+
         envelope = NoteEnvelope(
             note_path=rel_note_path,
             body_hash=new_body_hash,
             st_mtime_ns=st_after.st_mtime_ns,
             st_size=st_after.st_size,
+            status=note_status,
+            fleeting_path=rel_fleeting_path if not is_graduated else None,
             conflict_snapshot=conflict_snapshot,
         )
         node["obsidian"] = envelope.to_dict()
@@ -3479,14 +3563,17 @@ class MDCompiler:
             state = nd.get("state", "new")
             fsrs = FSRSState.from_dict(nd.get("fsrs"))
             is_due = bool(fsrs.due and fsrs.due <= today_str)
+            obs_meta = nd.get("obsidian") or {}
+            obs_status = obs_meta.get("status")
+            obs_path = obs_meta.get("note_path")
 
             if state == "review" and not is_due and (fsrs.reps > 0):
                 badge = "✅"
                 status_label = "✅ Review"
                 mastered_count += 1
-            elif state in ("learning", "review") or (fsrs.reps > 0):
+            elif obs_status == "fleeting" or state in ("learning", "relearning", "review") or (fsrs.reps > 0):
                 badge = "🔄"
-                status_label = "🔄 Due" if is_due else "🔄 Learning"
+                status_label = "🔄 Fleeting" if obs_status == "fleeting" else ("🔄 Due" if is_due else "🔄 Learning")
                 learning_count += 1
             else:
                 badge = "🔒"
@@ -3499,7 +3586,14 @@ class MDCompiler:
             mermaid_lines.append(f'  {m_id}["{badge} {safe_label} (S={s_disp})"]')
 
             note_title = VaultGate.sanitize_title(nd.get("title") or nid)
-            wikilink = f"[[{note_title}|{nd.get('title') or nid}]]" if DAGEngine.is_node_credited(nd) else (nd.get("title") or nid)
+            if obs_status == "fleeting" or (isinstance(obs_path, str) and obs_path.startswith("05 - Fleeting/mnemosyne/")):
+                fl_rel = obs_path or f"05 - Fleeting/mnemosyne/{sanitized_topic}/{note_title}.md"
+                fl_link = fl_rel[:-3] if fl_rel.endswith(".md") else fl_rel
+                wikilink = f"[[{fl_link}|{nd.get('title') or nid}]]"
+            elif DAGEngine.is_node_credited(nd) or obs_status == "permanent":
+                wikilink = f"[[{note_title}|{nd.get('title') or nid}]]"
+            else:
+                wikilink = nd.get("title") or nid
             table_lines.append(
                 f"| {nd.get('order', idx)} | {wikilink} | `{nd.get('kind', 'concept')}` | {status_label} | {s_disp} | {due_disp} |"
             )
@@ -3723,6 +3817,10 @@ def cmd_status(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
         })
 
     stash_items = store.read_jsonl("stash.jsonl")
+    inbox_dir = store.gate.vault_root / "05 - Fleeting" / "mnemosyne" / "inbox"
+    inbox_count = 0
+    if inbox_dir.is_dir():
+        inbox_count = sum(1 for f in inbox_dir.iterdir() if f.is_file() and f.suffix.lower() == ".md" and not f.name.startswith("."))
     model = store.load_learner_model(persist=False)
     return {
         "ok": True,
@@ -3731,6 +3829,7 @@ def cmd_status(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
         "state_dir": str(store.state_dir),
         "totals": totals,
         "stash_pending": len(stash_items),
+        "inbox_count": inbox_count,
         "memory": model.get("memory"),
         "topics": topics_summary,
     }
@@ -4638,6 +4737,7 @@ def cmd_synthesize(store: StateStore, args: argparse.Namespace) -> Dict[str, Any
             raise ValidationError("No topics found to synthesize.")
 
         all_misc = store.read_json("misconceptions.json") or []
+        stash_rows = store.read_jsonl("stash.jsonl")
         compiled_notes: List[Dict[str, Any]] = []
         compiled_mocs: List[str] = []
         conflicts: List[str] = []
@@ -4653,19 +4753,38 @@ def cmd_synthesize(store: StateStore, args: argparse.Namespace) -> Dict[str, Any
                 if isinstance(nid, str):
                     latest_rec_by_node[nid] = r
 
+            stash_by_node: Dict[str, Dict[str, Any]] = {}
+            for st_item in stash_rows:
+                if st_item.get("topic") == slug and isinstance(st_item.get("node"), str):
+                    stash_by_node[st_item["node"]] = st_item
+
             for nd in nodes:
                 nid = nd["id"]
-                if not include_all_nodes and not DAGEngine.is_node_credited(nd) and nid not in latest_rec_by_node:
+                if (
+                    not include_all_nodes
+                    and not DAGEngine.is_node_credited(nd)
+                    and nid not in latest_rec_by_node
+                    and nid not in stash_by_node
+                ):
                     continue
                 node_misc = [
                     m for m in all_misc
                     if isinstance(m, dict) and m.get("topic") == slug and m.get("node") == nid
                 ]
+                eff_receipt = latest_rec_by_node.get(nid)
+                if eff_receipt is None and nid in stash_by_node:
+                    st_ref = stash_by_node[nid]
+                    eff_receipt = {
+                        "sid": st_ref.get("sid"),
+                        "ts": str(st_ref.get("captured_at") or current_date().isoformat())[:10],
+                        "production": st_ref.get("production") or "",
+                        "score": 0,
+                    }
                 env = MDCompiler.compile_note(
                     store,
                     topic,
                     nd,
-                    latest_rec_by_node.get(nid),
+                    eff_receipt,
                     node_misc,
                     by_id,
                 )
@@ -4673,6 +4792,8 @@ def cmd_synthesize(store: StateStore, args: argparse.Namespace) -> Dict[str, Any
                     "topic": slug,
                     "node": nid,
                     "note_path": env.note_path,
+                    "status": env.status,
+                    "fleeting_path": env.fleeting_path,
                     "body_hash": env.body_hash,
                     "conflict_snapshot": env.conflict_snapshot,
                 })
@@ -4691,6 +4812,90 @@ def cmd_synthesize(store: StateStore, args: argparse.Namespace) -> Dict[str, Any
             "compiled_mocs": compiled_mocs,
             "conflicts": conflicts,
         }
+
+
+def cmd_inbox(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
+    """
+    Manages fleeting study inbox notes in <vault>/05 - Fleeting/mnemosyne/inbox/ (`list` | `add`).
+    """
+    action = getattr(args, "action", "list") or "list"
+    with store.lock():
+        store.ensure_initialized()
+        rel_inbox_dir = "05 - Fleeting/mnemosyne/inbox"
+        abs_inbox_dir = store.gate.validate_path(
+            store.gate.vault_root / rel_inbox_dir,
+            mode="w",
+            require_in_vault=True,
+        )
+        abs_inbox_dir.mkdir(parents=True, exist_ok=True)
+
+        if action == "add":
+            title = getattr(args, "title", None)
+            text = getattr(args, "text", None)
+            if not isinstance(title, str) or not title.strip():
+                raise ValidationError("inbox add requires --title <title>.")
+            if not isinstance(text, str) or not text.strip():
+                raise ValidationError("inbox add requires --text <text>.")
+
+            san_title = VaultGate.sanitize_title(title.strip())
+            rel_file = f"{rel_inbox_dir}/{san_title}.md"
+            abs_file = store.gate.validate_path(
+                store.gate.vault_root / rel_file,
+                mode="w",
+                require_in_vault=True,
+            )
+            created_ts = current_iso_timestamp()
+            clean_body = MDCompiler.neutralize_markdown_injections(text.strip())
+            md_content = (
+                "---\n"
+                f"title: {json.dumps(title.strip(), ensure_ascii=False)}\n"
+                'status: "inbox"\n'
+                f"created: {json.dumps(created_ts)}\n"
+                "tags:\n"
+                "  - fleeting\n"
+                "  - mnemosyne/inbox\n"
+                "---\n\n"
+                f"# {title.strip()}\n\n"
+                f"{clean_body}\n"
+            )
+            store.atomic_write_text(abs_file, md_content, require_in_vault=True)
+            return {
+                "ok": True,
+                "action": "add",
+                "title": title.strip(),
+                "sanitized_title": san_title,
+                "path": rel_file,
+            }
+
+        if action == "list":
+            items: List[Dict[str, Any]] = []
+            for f in sorted(abs_inbox_dir.iterdir(), key=lambda p: p.name):
+                if not f.is_file() or f.suffix.lower() != ".md" or f.name.startswith("."):
+                    continue
+                validated_f = store.gate.validate_path(f, mode="r", require_in_vault=True)
+                raw_txt = validated_f.read_text(encoding="utf-8")
+                body_preview = raw_txt
+                if raw_txt.lstrip("\ufeff").startswith("---"):
+                    m_fm = _FRONTMATTER_RE.match(raw_txt.replace("\r\n", "\n"))
+                    if m_fm:
+                        body_preview = raw_txt.replace("\r\n", "\n")[m_fm.end() :]
+                preview_clean = re.sub(r"\s+", " ", body_preview).strip()[:200]
+                st_f = validated_f.stat()
+                mod_iso = datetime.fromtimestamp(st_f.st_mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                items.append({
+                    "title": validated_f.stem,
+                    "path": str(validated_f.relative_to(store.gate.vault_root).as_posix()),
+                    "modified": mod_iso,
+                    "preview": preview_clean,
+                })
+            return {
+                "ok": True,
+                "inbox_dir": rel_inbox_dir,
+                "count": len(items),
+                "items": items,
+            }
+
+        raise ValidationError(f"Unknown inbox action {action!r}; expected 'list' or 'add'.")
 
 
 def cmd_artifact(store: StateStore, args: argparse.Namespace) -> Dict[str, Any]:
@@ -5532,12 +5737,16 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
             # 2. VaultGate Sanctuary & Traversal Guards (Exit Code 2)
             # ------------------------------------------------------------------
             sanctuary_targets = [
+                test_vault / "05 - Fleeting" / "quicknotes" / "secret.md",
+                test_vault / "05 - Fleeting" / "Aton" / "note.md",
                 test_vault / "05 - Fleeting" / "secret.md",
                 test_vault / "05 - fleeting" / "note.md",
-                test_vault / "05 - Fleeting." / "note.md",
+                test_vault / "05 - fleeting" / "mnemosyne" / "spoof.md",
+                test_vault / "05 - Fleeting." / "mnemosyne" / "note.md",
                 test_vault / ".git" / "config",
                 test_vault / ".obsidian" / "workspace.json",
-                test_vault / "04 - Permanent" / ".." / "05 - Fleeting" / "leak.md",
+                test_vault / "04 - Permanent" / ".." / "05 - Fleeting" / "quicknotes" / "leak.md",
+                "05 - Fleeting/quicknotes/quick-thought.md",
                 "05 - Fleeting/quick-thought.md",
                 ".git/HEAD",
                 ".obsidian/plugins.json",
@@ -5560,6 +5769,16 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
                     f"Write blocked on sanctuary/traversal path {st_path}",
                     "vaultgate",
                 )
+
+            # Verify 05 - Fleeting/mnemosyne/... is explicitly allowed for read & write
+            for allowed_fl in (
+                test_vault / "05 - Fleeting/mnemosyne/inbox/thought.md",
+                test_vault / "05 - Fleeting/mnemosyne/Raft Distributed Consensus/Consensus Step 6.md",
+                "05 - Fleeting/mnemosyne/inbox/idea.md",
+            ):
+                fl_r = gate.validate_path(allowed_fl, mode="r", require_in_vault=True)
+                fl_w = gate.validate_path(allowed_fl, mode="w", require_in_vault=True)
+                check(fl_r == fl_w and "05 - Fleeting/mnemosyne" in fl_r.as_posix(), f"05 - Fleeting/mnemosyne path allowed: {allowed_fl}", "vaultgate")
 
             # Write allowlist enforcement on non-allowlisted vault folders
             forbidden_write_dirs = [
@@ -5596,16 +5815,17 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
             )
             symlink_in_vault.unlink()
 
-            # Symlink pointing to 05 - Fleeting
-            fleeting_secret = test_vault / "05 - Fleeting" / "private.md"
-            fleeting_secret.write_text("my private fleeting note", encoding="utf-8")
+            # Symlink pointing to 05 - Fleeting/quicknotes
+            (test_vault / "05 - Fleeting" / "quicknotes").mkdir(parents=True, exist_ok=True)
+            fleeting_secret = test_vault / "05 - Fleeting" / "quicknotes" / "private.md"
+            fleeting_secret.write_text("my private quicknote", encoding="utf-8")
             symlink_to_fleeting = test_vault / "04 - Permanent" / "fleeting_link.md"
             symlink_to_fleeting.symlink_to(fleeting_secret)
             check_raises(
                 lambda: gate.validate_path(symlink_to_fleeting, mode="r", require_in_vault=True),
                 SanctuaryViolationError,
                 2,
-                "Symlink into 05 - Fleeting raises SanctuaryViolationError (Exit Code 2)",
+                "Symlink into 05 - Fleeting/quicknotes raises SanctuaryViolationError (Exit Code 2)",
                 "vaultgate",
             )
             symlink_to_fleeting.unlink()
@@ -6241,6 +6461,120 @@ def cmd_selftest(_store: StateStore, _args: argparse.Namespace) -> Dict[str, Any
             note5_file.unlink()
             cmd_synthesize(store, argparse.Namespace(topic="consensus-raft", all_nodes=False))
 
+            # Full Zettelkasten Graduation: Fleeting (score <= 2) -> Permanent (score >= 3) with user prose migration
+            st6_res = cmd_stash(
+                store,
+                argparse.Namespace(
+                    action="add",
+                    file=None,
+                    json=json.dumps({
+                        "topic": "consensus-raft",
+                        "node": "step-6",
+                        "production": "Partial attempt at step 6 mechanism without full invariant.",
+                        "confidence": 2,
+                        "kind": "encode",
+                    }),
+                ),
+            )
+            sid6_fl = st6_res["sid"]
+            sha6_fl = st6_res["stash_sha256"]
+            cmd_receipt(
+                store,
+                argparse.Namespace(
+                    positional_file=None,
+                    file=None,
+                    json=json.dumps({
+                        "sid": sid6_fl,
+                        "stash_sha256": sha6_fl,
+                        "topic": "consensus-raft",
+                        "node": "step-6",
+                        "grade": "partial",
+                        "rating": "hard",
+                        "score": 2,
+                        "produced": True,
+                        "confidence": 2,
+                        "production": "Partial attempt at step 6 mechanism without full invariant.",
+                        "rationale": "Partial recall (score 2) -> stays in learning/fleeting stage.",
+                    }),
+                ),
+            )
+            synth_fl = cmd_synthesize(store, argparse.Namespace(topic="consensus-raft", all_nodes=False))
+            fleeting6_file = test_vault / "05 - Fleeting" / "mnemosyne" / "Raft Distributed Consensus" / "Consensus Step 6.md"
+            perm6_file = test_vault / "04 - Permanent" / "Consensus Step 6.md"
+            check(fleeting6_file.is_file(), "Unmastered node (score <= 2) compiles to 05 - Fleeting/mnemosyne/<Topic>/<Node>.md", "md_sync")
+            check(not perm6_file.is_file(), "Unmastered node does not prematurely appear in 04 - Permanent/", "md_sync")
+            fl6_text = fleeting6_file.read_text(encoding="utf-8")
+            check('status: "fleeting"' in fl6_text, "Fleeting note has status: 'fleeting' in YAML frontmatter", "md_sync")
+            moc_fl_text = moc_file.read_text(encoding="utf-8")
+            check("05 - Fleeting/mnemosyne/Raft Distributed Consensus/Consensus Step 6" in moc_fl_text, "MoC links 🔄 fleeting node to its fleeting note", "md_sync")
+
+            # User writes custom YAML and personal prose in the fleeting draft before graduation
+            fl6_customized = (
+                '---\n'
+                'fleeting_origin: "study-session-oct-18"\n'
+                + fl6_text[4:]
+                + "\nUser fleeting margin note that MUST survive graduation to Permanent!\n"
+            )
+            fleeting6_file.write_text(fl6_customized, encoding="utf-8")
+
+            # Now learner masters step-6 (score = 3, rating = good) -> graduates to 04 - Permanent/
+            st6_grad = cmd_stash(
+                store,
+                argparse.Namespace(
+                    action="add",
+                    file=None,
+                    json=json.dumps({
+                        "topic": "consensus-raft",
+                        "node": "step-6",
+                        "production": "Complete derivation of step 6 consensus safety and quorum intersection.",
+                        "confidence": 4,
+                        "kind": "encode",
+                    }),
+                ),
+            )
+            cmd_receipt(
+                store,
+                argparse.Namespace(
+                    positional_file=None,
+                    file=None,
+                    json=json.dumps({
+                        "sid": st6_grad["sid"],
+                        "stash_sha256": st6_grad["stash_sha256"],
+                        "topic": "consensus-raft",
+                        "node": "step-6",
+                        "grade": "recalled",
+                        "rating": "good",
+                        "score": 3,
+                        "produced": True,
+                        "confidence": 4,
+                        "production": "Complete derivation of step 6 consensus safety and quorum intersection.",
+                        "rationale": "Mastered all rubric criteria -> graduates to permanent.",
+                    }),
+                ),
+            )
+            cmd_synthesize(store, argparse.Namespace(topic="consensus-raft", all_nodes=False))
+            check(perm6_file.is_file(), "Graduated node (score >= 3) compiled into 04 - Permanent/", "md_sync")
+            check(not fleeting6_file.exists(), "Obsolete fleeting draft unlinked upon graduation to prevent duplicates", "md_sync")
+            perm6_text = perm6_file.read_text(encoding="utf-8")
+            check('status: "permanent"' in perm6_text, "Graduated note has status: 'permanent'", "md_sync")
+            check('fleeting_origin: "study-session-oct-18"' in perm6_text, "Custom YAML property migrated from fleeting draft to permanent note", "md_sync")
+            check("User fleeting margin note that MUST survive graduation to Permanent!" in perm6_text, "User prose outside markers migrated from fleeting draft to permanent note", "md_sync")
+
+            # Inbox CLI (inbox add / inbox list) & status.inbox_count
+            inb_add = cmd_inbox(
+                store,
+                argparse.Namespace(
+                    action="add",
+                    title="Raft Joint Consensus Edge Case",
+                    text="Investigate why C_old,new is needed during membership changes.",
+                ),
+            )
+            check(inb_add["ok"] is True and inb_add["path"] == "05 - Fleeting/mnemosyne/inbox/Raft Joint Consensus Edge Case.md", "inbox add creates note in 05 - Fleeting/mnemosyne/inbox/", "cli_extras")
+            inb_list = cmd_inbox(store, argparse.Namespace(action="list", title=None, text=None))
+            check(inb_list["ok"] is True and inb_list["count"] == 1 and inb_list["items"][0]["title"] == "Raft Joint Consensus Edge Case", "inbox list returns created fleeting inbox note", "cli_extras")
+            st_with_inbox = cmd_status(store, argparse.Namespace(topic=None))
+            check(st_with_inbox.get("inbox_count") == 1, "cmd_status reports inbox_count == 1", "cli_extras")
+
             # ------------------------------------------------------------------
             # 9. Coordinate-Search `refit`, `doctor --repair`, `artifact`, `report`
             # ------------------------------------------------------------------
@@ -6486,6 +6820,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_sy.add_argument("--topic", "-t", default=None, help="Filter by topic slug")
     p_sy.add_argument("--all-nodes", dest="all_nodes", action="store_true", help="Compile all nodes including uncredited ones")
 
+    # inbox
+    p_ib = sub.add_parser("inbox", help="List or add fleeting study notes in 05 - Fleeting/mnemosyne/inbox/")
+    p_ib.add_argument("action", nargs="?", default="list", choices=("list", "add"))
+    p_ib.add_argument("--title", default=None, help="Note title for inbox add")
+    p_ib.add_argument("--text", default=None, help="Note body text for inbox add")
+
     # artifact
     p_ar = sub.add_parser("artifact", help="Register, list, or clear visual artifacts in 99 - Meta/attachments/")
     p_ar.add_argument("action", nargs="?", default="list", choices=("set", "list", "clear"))
@@ -6570,6 +6910,7 @@ COMMAND_DISPATCH: Dict[str, Callable[[StateStore, argparse.Namespace], Any]] = {
     "rate": cmd_receipt,
     "sync-sr": cmd_sync_sr,
     "synthesize": cmd_synthesize,
+    "inbox": cmd_inbox,
     "artifact": cmd_artifact,
     "verify-expr": cmd_verify_expr,
     "retention": cmd_retention,

@@ -1,40 +1,72 @@
 # Mnemosyne Obsidian Vault & Zettelkasten Conventions (`skills/_shared/obsidian-conventions.md`)
 
-> **Binding Vault & Markdown Specification for `mnemosyne.py`, `/synthesize`, `/learn`, `/review`, `/visualize`, and `/coach`.**
-> Enforces `RN-09` (Dual-Write Spaced Repetition Sync), `RN-10` (Vault Sanctuary & Epistemological Note Structure), `CON-03`..`CON-06`, `ASR-01`, `ASR-04`, `ASR-05`, and `SEC-YAML-01`.
+> **Binding Vault, Sanctuary & Zettelkasten Graduation Specification for `mnemosyne.py`, `/synthesize`, `/learn`, `/review`, `/visualize`, and `/coach`.**
+> Enforces `RN-09` (Dual-Write Spaced Repetition Sync), `RN-10` (Vault Sanctuary, Fleeting Graduation & Epistemological Note Structure), `CON-03`..`CON-06`, `ASR-01`, `ASR-04`, `ASR-05`, and `SEC-YAML-01`.
 
 ---
 
-## 1. The Inviolable Vault Sanctuary Law (`CON-03`, `ASR-04`, Exit Code `2`)
+## 1. The Inviolable Vault Sanctuary Law & `05 - Fleeting/` Partition (`CON-03`, `ASR-04`, Exit Code `2`)
 
 Mnemosyne operates directly inside the user's canonical Obsidian Vault (`MNEMOSYNE_VAULT_PATH`, defaulting to `/home/ozymandias/GoogleDrive/Obsidian/Vault` or submodule `<repo>/vault/Vault`).
 
+The Vault's `05 - Fleeting/` directory is partitioned into two strictly separated zones:
+1. **`05 - Fleeting/quicknotes/` (and any path in `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/`):**
+   - Used by the user's **Omarchy QuickNote widget** (`~/.config/omarchy/shell.json`) and personal fleeting thoughts.
+   - **Strictly Protected Sanctuary (`Exit Code 2`).**
+2. **`05 - Fleeting/mnemosyne/`:**
+   - Dedicated Mnemosyne Fleeting workspace supporting the **Study Inbox** (`05 - Fleeting/mnemosyne/inbox/`) and **Full Zettelkasten Graduation** (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` $\rightarrow$ `02 - Areas/` or `04 - Permanent/`).
+
 > [!CAUTION]
 > **HARD SANCTUARY BLOCK — EXIT CODE `2`**
-> The following directories are **inviolable sanctuaries**:
-> - **`05 - Fleeting/`** (User's private raw scratchpad and fleeting thoughts)
+> The following paths are **inviolable sanctuaries**:
+> - **`05 - Fleeting/quicknotes/`** (Omarchy QuickNote widget directory configured in `~/.config/omarchy/shell.json`)
+> - **Any file or subdirectory inside `05 - Fleeting/` OUTSIDE `05 - Fleeting/mnemosyne/`** (e.g., `05 - Fleeting/secret.md`, `05 - Fleeting/personal/`)
 > - **`.git/`** (Git repository internals)
 > - **`.obsidian/`** (Obsidian workspace, plugin binaries, and hotkeys)
 >
-> **Rule:** Neither `scripts/mnemosyne.py` (`VaultGate`) nor any skill or subagent may **ever** read, list, create, modify, or delete any file inside `05 - Fleeting/`, `.git/`, or `.obsidian/`. Any path (lexical or post-symlink `Path.resolve()`) touching these directories immediately aborts with **Exit Code `2`** and zero filesystem changes (`AC-SYNTH-03`).
+> **Rule:** Neither `scripts/mnemosyne.py` (`VaultGate`) nor any skill or subagent may **ever** read, list, create, modify, or delete any file inside `05 - Fleeting/quicknotes/`, any path in `05 - Fleeting/` outside `05 - Fleeting/mnemosyne/`, `.git/`, or `.obsidian/`. Any lexical or symlink-resolved path touching these sanctuaries immediately aborts with **Exit Code `2`** and zero filesystem changes (`AC-SYNTH-03`).
 
 ---
 
-## 2. Canonical Vault Folder Taxonomy (`CON-05`)
+## 2. Canonical Vault Folder Taxonomy & Zettelkasten Graduation Lifecycle (`CON-05`)
 
 All Mnemosyne reads and writes are strictly confined to the following directory taxonomy:
 
-| Vault Directory | Access Mode | Role & File Naming Convention |
+| Vault Directory | Access Mode | Role, Lifecycle Stage & File Naming Convention |
 | :--- | :---: | :--- |
-| **`00 - Maps of Content/`** | Read / Write | Topic Maps of Content: `<Sanitized Topic Title> MoC.md` (e.g., `Raft Distributed Consensus MoC.md`). Contains topic progress summary, mastery table, and a Mermaid dependency DAG (`flowchart TD`) with live status badges (`✅`, `🔄`, `🔒`) and `[[Wikilinks]]`. |
-| **`02 - Areas/<Domain>/`** | Read / Write | Domain-scoped atomic Zettelkasten notes when `note_target == "02 - Areas"`: `02 - Areas/<Sanitized Domain>/<Sanitized Node Title>.md`. |
-| **`04 - Permanent/`** | Read / Write | Evergreen atomic Zettelkasten notes when `note_target == "04 - Permanent"` (default): `04 - Permanent/<Sanitized Node Title>.md`. |
+| **`05 - Fleeting/quicknotes/`** *(and `05 - Fleeting/*` outside `mnemosyne/`)* | **FORBIDDEN (`Exit 2`)** | **Inviolable Sanctuary.** Omarchy QuickNote widget (`~/.config/omarchy/shell.json`) and personal scratch notes. Zero reads, zero writes. |
+| **`05 - Fleeting/mnemosyne/inbox/`** | Read / Write | **Study Inbox:** Raw study ideas, questions, paper snippets, or topic seeds dropped by the user or via `python3 scripts/mnemosyne.py inbox add`. Surfaced by `/coach` and `/learn` via `python3 scripts/mnemosyne.py inbox list`. |
+| **`05 - Fleeting/mnemosyne/<Topic>/`** | Read / Write | **Fleeting Study Drafts (`status: fleeting`):** `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`. Holds in-progress / unmastered nodes (`learning`, `relearning`, `score <= 2`, or stashed drafts prior to passing blind assessment). |
+| **`00 - Maps of Content/`** | Read / Write | **Topic Maps of Content:** `<Sanitized Topic Title> MoC.md` (e.g., `Raft Distributed Consensus MoC.md`). Contains topic progress summary, mastery table, and a Mermaid dependency DAG (`flowchart TD`) with live status badges (`✅`, `🔄`, `🔒`) and `[[Wikilinks]]`. |
+| **`02 - Areas/<Domain>/<Topic>/`** *(or `02 - Areas/<Domain>/`)* | Read / Write | **Graduated Domain Notes (`status: permanent`):** Compiled when `note_target == "02 - Areas"` and the node passes blind assessment (`score >= 3` / `review` state). |
+| **`04 - Permanent/`** | Read / Write | **Graduated Evergreen Notes (`status: permanent`):** `04 - Permanent/<Sanitized Node Title>.md`. Compiled when `note_target == "04 - Permanent"` (default) and the node passes blind assessment (`score >= 3` / `review` state). |
 | **`99 - Meta/00 - Templates/`** | **Read-Only** | User's Obsidian note templates (read-only reference; never overwritten). |
 | **`99 - Meta/attachments/`** | Read / Write | Self-verified visual artifacts: `<topic>-<node>.svg` (or `viz-<slug>-<ts>.svg`) and `<topic>-<node>-explorable.html` (or `viz-<slug>-<ts>.html`), plus `report.html` dashboard. |
 | **`99 - Meta/mnemosyne-state/`** | Read / Write | **Single Authoritative State Ledger (`HLD-01`):**<br>• `.mnemosyne.lock` (PID-checked POSIX advisory mutex)<br>• `learner-model.json` (FSRS-4.5 $W[0..16]$, retention target, preferences)<br>• `topics/<slug>.json` (Curriculum DAG, node rubrics, FSRS state, OCC metadata)<br>• `receipts/<slug>.jsonl` (Append-only cryptographic receipt ledger)<br>• `stash.jsonl` (Crash-safe ungraded learner productions)<br>• `misconceptions.json` & `experiments.json`<br>• `conflicts/<slug>--<node>--<ts>.md` (OCC & managed-block conflict snapshots) |
-| **`05 - Fleeting/`** | **FORBIDDEN (`Exit 2`)** | **Inviolable Sanctuary.** Zero reads, zero writes. |
 
-### 2.1 Slug & Filename Sanitization (`CON-06`)
+### 2.1 Full Zettelkasten Graduation Workflow (`status: fleeting` $\rightarrow$ `status: permanent`)
+
+```mermaid
+flowchart LR
+    Inbox["05 - Fleeting/mnemosyne/inbox/\n(Raw Study Seeds & Questions)\nmnemosyne.py inbox list / add"] -->|"/learn or /coach"| Draft["05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md\nstatus: fleeting\n(In-Progress / Stashed / score <= 2 / learning)"]
+    Draft -->|"Passes Blind Assessment\n(score >= 3 / state == review)\nmnemosyne.py synthesize"| Grad["04 - Permanent/<Node Title>.md\nOR 02 - Areas/<Domain>/<Topic>/<Node Title>.md\nstatus: permanent"]
+    Draft -.->|"Carries over user YAML & prose\noutside <!-- mnemosyne:start/end -->\nand removes fleeting draft"| Grad
+```
+
+1. **Stage 0 — Study Inbox (`05 - Fleeting/mnemosyne/inbox/`):**
+   - The user (or `python3 scripts/mnemosyne.py inbox add --title "<title>" --file <path>`) captures raw study questions, curiosity gaps, or reading notes in `05 - Fleeting/mnemosyne/inbox/`.
+   - `/coach` and `/learn` inspect `python3 scripts/mnemosyne.py inbox list` to propose new topics or link inbox items into active curriculum DAGs.
+2. **Stage 1 — Fleeting Study Draft (`05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md`):**
+   - While a node is in acquisition or recovery (`state` in `learning` or `relearning`, `score <= 2` on blind assessment, or has a stashed production not yet graduated), `mnemosyne.py synthesize` writes the note to `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` with YAML `status: fleeting`.
+   - The user can freely annotate below `<!-- mnemosyne:end -->` while studying.
+3. **Stage 2 — Graduation to Permanent (`02 - Areas/` or `04 - Permanent/`):**
+   - Once the node passes blind assessment (`score >= 3` / `state == "review"`), running `python3 scripts/mnemosyne.py synthesize` **automatically graduates** the note from `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` to its permanent destination (`04 - Permanent/<Node Title>.md` or `02 - Areas/<Domain>/<Topic>/<Node Title>.md`):
+     - Updates YAML frontmatter to `status: permanent`.
+     - **Carries over 100% of user-authored YAML keys and any freeform prose written outside `<!-- mnemosyne:start/end -->`** from the fleeting draft into the permanent note.
+     - **Atomically removes the superseded fleeting draft** from `05 - Fleeting/mnemosyne/<Topic>/` so no duplicate notes exist in the Vault.
+     - Updates `00 - Maps of Content/<Topic> MoC.md` badges (`🔄` $\rightarrow$ `✅`) and wikilinks.
+
+### 2.2 Slug & Filename Sanitization (`CON-06`)
 - **Topic Slugs & Node IDs:** Must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (kebab-case recommended, no spaces, slashes, or leading dots).
 - **Markdown Filenames (`<Sanitized Title>.md`):** Normalized via Unicode `NFC`, stripped of control characters (`0x00–0x1F`), with filesystem-unsafe characters `/\:*?"<>|` replaced by `-`. The un-sanitized human title is preserved in YAML `title`, `aliases`, and the `# Heading`.
 
@@ -42,11 +74,12 @@ All Mnemosyne reads and writes are strictly confined to the following directory 
 
 ## 3. Dual-Write YAML Frontmatter Contract (`RN-09`, `ASR-05`, `SEC-YAML-01`)
 
-Every compiled concept, procedure, or fact note in `02 - Areas/` and `04 - Permanent/` carries a deterministic dual-write YAML frontmatter block that bridges Mnemosyne's FSRS-4.5 engine with the **`obsidian-spaced-repetition`** community plugin:
+Every compiled note carries a deterministic dual-write YAML frontmatter block (`status: fleeting` while in `05 - Fleeting/mnemosyne/<Topic>/`; `status: permanent` once graduated to `02 - Areas/` or `04 - Permanent/`) that bridges Mnemosyne's FSRS-4.5 engine with the **`obsidian-spaced-repetition`** community plugin:
 
 ```yaml
 ---
 title: "Split-Brain & Quorum Intersection"
+status: permanent
 aliases:
   - "Split-Brain & Quorum Intersection"
   - "split-brain-impossibility"
@@ -74,14 +107,17 @@ sr-ease: 222
 ```
 
 ### 3.1 Span-Preserving YAML Rules (`SEC-YAML-01`)
-1. **User-Owned Keys Preserved Byte-for-Byte:** Any custom YAML keys added by the user (e.g., `cssclasses`, `up: "[[Distributed Systems MoC]]"`, `status`, custom `tags` or `aliases`) are preserved untouched across re-syntheses.
-2. **Additive Tag Merging:** Mnemosyne ensures `#review`, `#sr/concept` (or `#sr/procedure`, `#sr/fact`), and `#mnemosyne/<topic>` are present in `tags` without removing any user-added tags.
-3. **Unquoted `sr-*` Scalars for Plugin Regex Compatibility:**
+1. **User-Owned Keys Preserved Byte-for-Byte:** Any custom YAML keys added by the user (e.g., `cssclasses`, `up: "[[Distributed Systems MoC]]"`, custom `tags` or `aliases`) are preserved untouched across re-syntheses and across graduation from `05 - Fleeting/mnemosyne/<Topic>/` to `02 - Areas/` or `04 - Permanent/`.
+2. **Lifecycle `status` Property:**
+   - `status: fleeting` on drafts in `05 - Fleeting/mnemosyne/<Topic>/<Node Title>.md` (`learning`, `relearning`, `score <= 2`, or stashed drafts).
+   - `status: permanent` on graduated notes in `02 - Areas/` and `04 - Permanent/` (`score >= 3` / `review` state).
+3. **Additive Tag Merging:** Mnemosyne ensures `#review`, `#sr/concept` (or `#sr/procedure`, `#sr/fact`), and `#mnemosyne/<topic>` are present in `tags` without removing any user-added tags.
+4. **Unquoted `sr-*` Scalars for Plugin Regex Compatibility:**
    - `sr-due` MUST be emitted as an unquoted ISO date (`sr-due: YYYY-MM-DD`).
    - `sr-interval` MUST be emitted as an integer $\ge 1$ (`max(1, round(fsrs.interval))`).
    - `sr-ease` MUST be emitted as an integer in $[130, 300]$ computed from FSRS difficulty $D \in [1, 10]$:
      $$\text{sr-ease} = \text{round}\left(300 - \frac{D - 1.0}{9.0} \times 170\right)$$
-4. **Bi-Directional `sync-sr` Reconciliation (`ASR-05`):**
+5. **Bi-Directional `sync-sr` Reconciliation (`ASR-05`):**
    - When the user reviews a note inside Obsidian using `obsidian-spaced-repetition`, the plugin updates `sr-due`, `sr-interval`, and `sr-ease` while `mnemosyne_sid` remains equal to `node.last_sid`.
    - Running `python3 scripts/mnemosyne.py sync-sr` (also run automatically before `synthesize`) detects `sr-due != fsrs_due` (ignoring `*.sync-conflict*` files), infers the FSRS rating $G \in \{1..4\}$ from $\Delta \text{sr-ease}$ and `sr-interval`:
      - $\text{sr-interval}_{\text{md}} \le 1 \lor \Delta \text{sr-ease} \le -15 \implies G = 1\ (\text{again / lapsed})$
@@ -94,7 +130,7 @@ sr-ease: 222
 
 ## 4. Managed Block Rules (`<!-- mnemosyne:start/end -->`) & OCC Safety (`RN-10`, `NFR-07`)
 
-Every compiled note separates **Mnemosyne-managed epistemological synthesis** from **user-owned freeform Zettelkasten prose**:
+Every compiled note (both fleeting drafts in `05 - Fleeting/mnemosyne/<Topic>/` and graduated permanent notes in `02 - Areas/` or `04 - Permanent/`) separates **Mnemosyne-managed epistemological synthesis** from **user-owned freeform Zettelkasten prose**:
 
 ```markdown
 # <Human Node Title>
@@ -111,7 +147,7 @@ Every compiled note separates **Mnemosyne-managed epistemological synthesis** fr
 **Prerequisites:** [[<Prerequisite Note Title>]] | **Contrasts With:** [[<Contrast Note Title>]] | **Topic MoC:** [[<Topic Title> MoC]]
 
 > [!quote] Learner's Own Words (Verified Receipt `<sid>` · `<YYYY-MM-DD>`)
-> <Verbatim learner production from the latest recalled/partial receipt>
+> <Verbatim learner production from the latest receipt or stashed draft>
 
 ## Visual Model
 ```mermaid
@@ -124,7 +160,7 @@ Every compiled note separates **Mnemosyne-managed epistemological synthesis** fr
 <!-- mnemosyne:end -->
 
 ## Personal Notes & Further Connections
-(User-authored prose, backlinks, literature citations, and code snippets outside the managed markers are 100% preserved across all re-syntheses.)
+(User-authored prose, backlinks, literature citations, and code snippets outside the managed markers are 100% preserved across all re-syntheses AND carried over automatically when graduating from `05 - Fleeting/mnemosyne/<Topic>/` to `02 - Areas/` or `04 - Permanent/`.)
 ```
 
 ### 4.1 Optimistic Concurrency Control (OCC) & Corruption Guards (`AC-SYNTH-04`)
