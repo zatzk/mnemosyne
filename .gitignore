@@ -1,0 +1,22 @@
+# Mnemosyne atomic temporary writes & POSIX lock files
+.mnemosyne_tmp_*
+**/.mnemosyne_tmp_*
+.mnemosyne.lock
+**/.mnemosyne.lock
+*.corrupt.*
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS & editor scratch files
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+/tmp/

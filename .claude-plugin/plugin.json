@@ -1,0 +1,19 @@
+{
+  "name": "mnemosyne",
+  "version": "1.0.0",
+  "description": "Obsidian-native AI Study Engine & Cognitive Harness: Unconditional Truths, 3Blue1Brown Motivated Discovery, Binary-Search Frontier Probing, Blind Zero-Context Assessor with Claim-Check Stash, deterministic FSRS-4.5 + obsidian-spaced-repetition bridge, self-verifying visuals, and automated Zettelkasten synthesis.",
+  "author": {
+    "name": "ozymandias"
+  },
+  "homepage": "https://github.com/zatzk/mnemosyne",
+  "keywords": [
+    "mnemosyne",
+    "learning",
+    "obsidian",
+    "zettelkasten",
+    "spaced-repetition",
+    "fsrs-4.5",
+    "3blue1brown",
+    "pedagogy"
+  ]
+}

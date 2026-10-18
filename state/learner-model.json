@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "engine_version": "1.0.0",
+  "created": "2026-10-18",
+  "memory": {
+    "fsrs_params": [
+      0.4872,
+      1.4003,
+      3.7145,
+      13.8206,
+      5.1618,
+      1.2298,
+      0.8975,
+      0.031,
+      1.6474,
+      0.1367,
+      1.0461,
+      2.1072,
+      0.0793,
+      0.3246,
+      1.587,
+      0.2272,
+      2.8755
+    ],
+    "desired_retention": 0.9,
+    "interval_multiplier": 1.0,
+    "last_refit": null
+  },
+  "challenge_band": {
+    "target_success": 0.85,
+    "hint_budget": 2
+  },
+  "strategy_weights": {
+    "derivation_first": 0.65,
+    "example_first": 0.35
+  },
+  "settings": {
+    "default_mode": "standard",
+    "artifacts": "threshold-only",
+    "ambient": "quiet",
+    "decay_notice": "on",
+    "relearning": "on"
+  },
+  "interests": [
+    "distributed systems",
+    "category theory",
+    "systems engineering"
+  ],
+  "goals": []
+}
